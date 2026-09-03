@@ -478,6 +478,132 @@ rather not manage containers from the command line. For each new service,
 "public" just because one service is. Reference: [Docker Engine install
 docs](https://docs.docker.com/engine/install/).
 
+### A worked example — file sync and storage with Nextcloud
+
+Nextcloud is heavier than Uptime Kuma (it needs a real database and persists a
+lot of user data), so it's worth walking through in full — including the
+gotchas that trip people up on a first install.
+
+**1. Plan storage first.** Nextcloud will hold every file you sync to it. If
+you're running from a microSD card, put Nextcloud's data directory on an
+attached SSD/USB drive instead of the card — both for space and because heavy
+file writes wear microSD cards out (see [Lessons
+learned](#14-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
+
+**2. Write the Compose file.** Nextcloud needs two containers: the app itself
+and a database (MariaDB here — Nextcloud's own docs recommend it over SQLite
+for anything beyond a quick test).
+
+```bash
+mkdir -p ~/apps/nextcloud && cd ~/apps/nextcloud
+nano docker-compose.yml
+```
+
+```yaml
+services:
+  db:
+    image: mariadb:10.11
+    container_name: nextcloud-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=<choose-a-strong-password>
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_PASSWORD=<choose-a-different-strong-password>
+    volumes:
+      - ./db:/var/lib/mysql
+
+  app:
+    image: nextcloud:latest
+    container_name: nextcloud
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "8080:80"
+    environment:
+      - MYSQL_HOST=db
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_PASSWORD=<same-password-as-above>
+    volumes:
+      - ./html:/var/www/html
+      - /mnt/storage/nextcloud:/var/www/html/data
+```
+
+- `depends_on` makes Docker start the database before the app.
+- `./db` and `./html` keep the database and Nextcloud's own app files next to
+  the compose file; `/mnt/storage/nextcloud` (the path you planned in step 1)
+  is where actual user files live — mapped in separately so you can put it on
+  different, larger storage than the app itself.
+- The two `MYSQL_PASSWORD` values and the matching one in `db.environment`
+  **must be identical** — a common first-run failure is a typo between them.
+
+**3. Start it and run the setup wizard.**
+
+```bash
+docker compose up -d
+docker compose logs -f app   # watch startup; Ctrl+C once it settles
+```
+
+Visit `http://<pi-ip>:8080` on your home network. The setup wizard asks for an
+admin username/password and the database details — use the same
+`nextcloud` / `<same-password-as-above>` / database host `db` you set above.
+
+**4. Fix the "Access through untrusted domain" error.** This is the single
+most common Nextcloud gotcha: by default it only accepts requests to the
+hostname it saw during setup (usually `<pi-ip>:8080`). The moment you reach it
+by a different hostname — your tunnel domain, a Tailscale name, `localhost` —
+it refuses the request. Add every hostname you'll use to `trusted_domains`:
+
+```bash
+docker exec -it nextcloud php occ config:system:set trusted_domains 1 \
+  --value="cloud.example.com"
+docker exec -it nextcloud php occ config:system:set trusted_domains 2 \
+  --value="<pi-ip>"
+```
+
+Each command adds one more entry (index `1`, `2`, `3`, ...) — don't reuse
+index `0`, that's reserved for the original setup hostname.
+
+**5. Decide how it's reachable, and if public, set `overwriteprotocol`.** If
+you're exposing it via a [tunnel](#10-reaching-your-pi-from-outside-home)
+under HTTPS, tell Nextcloud it's being accessed over HTTPS even though the
+container itself only speaks plain HTTP internally — otherwise it will
+generate broken `http://` links and reject some requests:
+
+```bash
+docker exec -it nextcloud php occ config:system:set overwriteprotocol \
+  --value="https"
+```
+
+**6. Turn on Nextcloud's own maintenance jobs.** Nextcloud expects a recurring
+background job for housekeeping (cleaning expired shares, updating previews,
+etc.). Point cron at it instead of relying on the slower built-in AJAX trigger:
+
+```bash
+(crontab -l 2>/dev/null; echo "*/5 * * * * docker exec -u www-data nextcloud php cron.php") | crontab -
+```
+
+Then in the Nextcloud admin settings (**Settings → Administration →
+Basic settings**), switch "Background jobs" to **Cron**.
+
+**7. Updating.** Nextcloud updates itself in-app for minor versions (via the
+web UI's update notification), but for major version jumps, pull the new image
+and follow Nextcloud's release notes — major upgrades sometimes require
+stepping through versions one at a time rather than skipping ahead:
+
+```bash
+docker compose pull app
+docker compose up -d app
+```
+
+**8. Back up before you touch any of this.** Nextcloud's data lives in three
+places, and a backup needs all three or it's not a real backup: the database
+(`docker exec nextcloud-db mysqldump -u root -p nextcloud > nextcloud-db.sql`),
+the `./html` config/app folder, and the actual files in
+`/mnt/storage/nextcloud`. See [Backups and maintenance](#12-backups-and-maintenance).
+
 ## 12. Backups and maintenance
 
 A home server is only as safe as its backups. Build these habits early:
