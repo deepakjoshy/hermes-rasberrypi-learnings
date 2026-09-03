@@ -314,7 +314,22 @@ sudo systemctl enable --now fail2ban
 sudo fail2ban-client status sshd
 ```
 
-The status output shows currently banned IPs and totals. Reference: [fail2ban
+The status output shows currently banned IPs and totals.
+
+**Verify it's actually reading logs.** fail2ban can start cleanly yet ban
+nothing if it's watching the wrong log source. On systems that keep
+authentication logs only in the systemd journal (rather than in a
+`/var/log/auth.log` file), tell the jail to read the journal by adding
+`backend = systemd` under `[sshd]` in `jail.local`, then restart it. A quick
+end-to-end test is to ban and unban a documentation-only test address and
+confirm both take effect:
+
+```bash
+sudo fail2ban-client set sshd banip 203.0.113.10
+sudo fail2ban-client set sshd unbanip 203.0.113.10
+```
+
+Reference: [fail2ban
 docs](https://github.com/fail2ban/fail2ban).
 
 ## 9. Turn on automatic security updates
