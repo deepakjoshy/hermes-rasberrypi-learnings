@@ -98,6 +98,23 @@ sudo reboot
 ```
 
 Confirm you can SSH back in after the reboot before doing anything else.
+
+**Troubleshooting: "REMOTE HOST IDENTIFICATION HAS CHANGED!"** — if you ever
+re-flash the SD card, swap in a new one, or reinstall the OS while keeping the
+same hostname or IP, your next SSH attempt will refuse to connect with a
+scary red warning like this. It means the Pi generated a new SSH host key and
+your computer's `known_hosts` file still has the old one on file — it's not a
+lockout and doesn't mean anything is compromised. Remove the stale entry and
+reconnect:
+
+```bash
+ssh-keygen -R <pi-ip-or-hostname>
+ssh <username>@<pi-ip-or-hostname>
+```
+
+You'll be prompted to accept the new host key fingerprint once, exactly as if
+connecting for the first time.
+
 This is the point to also decide **how you'll manage the box long-term** —
 by hand, with config management (Ansible, etc.), or with the help of an
 automation/AI agent. If an agent or script is going to have real access to
