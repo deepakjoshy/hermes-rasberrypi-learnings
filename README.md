@@ -172,6 +172,14 @@ A router reservation is preferred over setting a static IP on the Pi itself,
 because it keeps all your address decisions in one place and avoids conflicts.
 From now on the Pi always answers at the same address.
 
+**One gotcha:** the reservation only takes effect when the Pi next *renews* its
+DHCP lease — it keeps its current address until then. Reboot the Pi (or wait out
+the lease) to pick up the reserved IP, then confirm it took:
+
+```bash
+hostname -I    # should show the address you reserved
+```
+
 ## 6. Secure your SSH access
 
 Right now the Pi accepts password logins, which are vulnerable to guessing. The
