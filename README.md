@@ -643,6 +643,21 @@ A home server is only as safe as its backups. Build these habits early:
   ```
   `-a` preserves permissions/timestamps, `-v` is verbose, `--delete` mirrors
   deletions. Schedule it with `cron` (`crontab -e`) to run nightly.
+- **Never copy a live database file — dump it instead.** Grabbing the files
+  under a running database's data directory with `cp` or `rsync` can capture a
+  half-written, corrupt snapshot that won't restore. Use the database's own dump
+  tool while it's running, which produces a consistent copy:
+  ```bash
+  # MariaDB/MySQL (e.g. the Nextcloud DB container above)
+  docker exec nextcloud-db mysqldump -u root -p<root-password> nextcloud > nextcloud-db.sql
+  ```
+  For PostgreSQL the equivalent is `pg_dump`. Back up the dump file, not the raw
+  data folder.
+- **Test a restore at least once — an untested backup is not a backup.** The
+  only way to know your backup works is to rebuild from it: copy the dump and
+  data to a scratch location (or a spare SD card / second Pi), restore, and
+  confirm the service comes up with your data intact. Do this *before* you need
+  it, not during an emergency.
 - **Aim for the [3-2-1 rule](https://www.backblaze.com/blog/the-3-2-1-backup-strategy/):**
   3 copies, on 2 kinds of media, with 1 kept offsite.
 - **Watch for storage wear** if running from microSD. Check for disk errors and
