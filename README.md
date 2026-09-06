@@ -25,6 +25,29 @@ A note on convention: commands you run **on the Pi** are shown in code blocks.
 Anywhere you see a placeholder in angle brackets like `<pi-ip>` or `<username>`,
 replace it (including the brackets) with your real value.
 
+## How to use this guide
+
+The sections are ordered so you can work straight down the page, but they're
+not all equally essential. If you're starting from nothing:
+
+| Sections | What it is | Skip it? |
+|---|---|---|
+| **1–8** | The core build: hardware, OS, login, stable address, SSH keys, firewall, fail2ban | **No.** This is the minimum for a Pi that's safe to leave running. Budget an unhurried evening. |
+| **9–11** | Network awareness and remote access | Read **11** before exposing anything. 9 and 10 can wait a week. |
+| **12** | Docker — the foundation for everything you'll actually run | **No**, if you plan to host any app at all. |
+| **13–17** | Optional services: file shares, monitoring, media, local AI, storage | Pick only what you want. These are independent of each other. |
+| **18–23** | Keeping it alive: backups, config versioning, logs, automation | **18 is not optional.** Do it the same week you put real data on the Pi. |
+| **24–27** | Checklist, lessons, troubleshooting, further reading | Reference material — come back when something breaks. |
+
+Two habits worth adopting from section 1, not section 18:
+
+- **Before editing any config file, copy it first.** Every rollback in this
+  guide depends on that copy existing.
+- **After any change to SSH, the firewall, or the network, open a *second*
+  connection to confirm you can still get in** — while the first one is still
+  open. Locking yourself out of a headless machine is the one mistake here that
+  costs you a re-flash instead of a retry.
+
 ## Table of contents
 
 1. [What you need](#1-what-you-need)
@@ -50,9 +73,10 @@ replace it (including the brackets) with your real value.
 21. [Integrating third-party device and cloud APIs](#21-integrating-third-party-device-and-cloud-apis)
 22. [Task automation and scheduled jobs](#22-task-automation-and-scheduled-jobs)
 23. [A tiered approval model for automation](#23-a-tiered-approval-model-for-automation)
-24. [Lessons learned](#24-lessons-learned)
-25. [Troubleshooting](#25-troubleshooting)
-26. [Further reading](#26-further-reading)
+24. [A checklist to verify your setup](#24-a-checklist-to-verify-your-setup)
+25. [Lessons learned](#25-lessons-learned)
+26. [Troubleshooting](#26-troubleshooting)
+27. [Further reading](#27-further-reading)
 
 ---
 
@@ -64,7 +88,7 @@ A shopping/checklist before you start:
 |---|---|
 | A Raspberry Pi | Any model works; a **Pi 4 or Pi 5 with 4GB+ RAM** is comfortable for several Docker containers. This guide was built on a Pi 5 (8GB). |
 | Power supply | Use the **official supply for your model** (a Pi 5 wants 5V/5A USB-C). Underpowered supplies cause random crashes and SD-card corruption. |
-| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#24-lessons-learned). |
+| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#25-lessons-learned). |
 | A second computer | To flash the OS and to SSH in from. Windows, macOS, or Linux all work. |
 | Ethernet cable (recommended) | Wired is more reliable than Wi-Fi for a server that must stay reachable. |
 | Your home router's login | You'll need it later to reserve an IP address for the Pi. |
@@ -512,6 +536,27 @@ sudo cloudflared service install   # run it automatically on boot
 > auth gate (Cloudflare Access or equivalent) in front of anything that
 > shouldn't be fully public.
 
+**What "publish it and secure it later" actually costs.** Automated scanners
+find new hostnames within hours, not weeks — certificate transparency logs
+publish every TLS certificate issued, so a freshly-published name is
+discoverable the moment it gets a certificate, without anyone guessing it.
+"Nobody knows the URL" has never been a control. In practice this means the
+auth gate has to go up **in the same sitting** as the hostname, not on the
+weekend when you get around to it.
+
+The cheap version, if you're not ready to configure a full identity provider:
+put HTTP basic auth in front of the hostname at the tunnel/proxy layer, so
+credentials are demanded before traffic ever reaches the app. It's crude, but
+it's the difference between "one factor" and "none", and it takes minutes.
+Upgrade it to a real auth gate (Cloudflare Access, Authelia, or your proxy's
+equivalent) when you have time.
+
+If you *have* published something unprotected and want to walk it back, remove
+the DNS route first (`cloudflared tunnel route dns` created it), then take the
+service down — in that order. Removing the container first leaves a published
+hostname pointing at a dead service, which tells a scanner the name is real and
+worth revisiting.
+
 ### Option D: Remote desktop (VNC) for GUI access
 
 SSH covers a terminal, but occasionally you want an actual graphical screen —
@@ -619,7 +664,7 @@ gotchas that trip people up on a first install.
 you're running from a microSD card, put Nextcloud's data directory on an
 attached SSD/USB drive instead of the card — both for space and because heavy
 file writes wear microSD cards out (see [Lessons
-learned](#24-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
+learned](#25-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
 
 **2. Write the Compose file.** Nextcloud needs two containers: the app itself
 and a database (MariaDB here — Nextcloud's own docs recommend it over SQLite
@@ -688,9 +733,9 @@ by a different hostname — your tunnel domain, a Tailscale name, `localhost` �
 it refuses the request. Add every hostname you'll use to `trusted_domains`:
 
 ```bash
-docker exec -it nextcloud php occ config:system:set trusted_domains 1 \
+docker exec -u www-data nextcloud php occ config:system:set trusted_domains 1 \
   --value="cloud.example.com"
-docker exec -it nextcloud php occ config:system:set trusted_domains 2 \
+docker exec -u www-data nextcloud php occ config:system:set trusted_domains 2 \
   --value="<pi-ip>"
 ```
 
@@ -704,7 +749,7 @@ container itself only speaks plain HTTP internally — otherwise it will
 generate broken `http://` links and reject some requests:
 
 ```bash
-docker exec -it nextcloud php occ config:system:set overwriteprotocol \
+docker exec -u www-data nextcloud php occ config:system:set overwriteprotocol \
   --value="https"
 ```
 
@@ -731,9 +776,11 @@ docker compose up -d app
 
 **8. Back up before you touch any of this.** Nextcloud's data lives in three
 places, and a backup needs all three or it's not a real backup: the database
-(`docker exec nextcloud-db mysqldump -u root -p nextcloud > nextcloud-db.sql`),
-the `./html` config/app folder, and the actual files in
-`/mnt/storage/nextcloud`. See [Backups and maintenance](#18-backups-and-maintenance).
+(dumped with `mysqldump` — see [Backups and
+maintenance](#18-backups-and-maintenance) for the safe way to pass the
+password), the `./html` config/app folder, and the actual files in
+`/mnt/storage/nextcloud`. Restoring only the files without the database gives
+you a Nextcloud that has your data on disk but no idea it exists.
 
 **9. Optional: expose a folder you already keep elsewhere as External Storage.**
 If you maintain notes or files outside Nextcloud's own data directory (a git
@@ -741,7 +788,7 @@ repo, an Obsidian vault, another app's export folder), you can bind-mount that
 host path into the container and register it as **External Storage** (Settings
 → Administration → External Storage) instead of duplicating the data. Two
 gotchas: the `files_external` app is disabled by default (enable it with
-`docker exec -it nextcloud php occ app:enable files_external` before the
+`docker exec -u www-data nextcloud php occ app:enable files_external` before the
 settings page will let you add one), and bind mounts preserve the **host**
 file's ownership — if the container's `www-data` user (typically uid `33`)
 doesn't already have permission on that host path, grant it explicitly rather
@@ -1048,10 +1095,22 @@ A home server is only as safe as its backups. Build these habits early:
   tool while it's running, which produces a consistent copy:
   ```bash
   # MariaDB/MySQL (e.g. the Nextcloud DB container above)
-  docker exec nextcloud-db mysqldump -u root -p<root-password> nextcloud > nextcloud-db.sql
+  docker exec -e MYSQL_PWD="$DB_ROOT_PASSWORD" nextcloud-db \
+    mysqldump -u root nextcloud > nextcloud-db.sql
   ```
   For PostgreSQL the equivalent is `pg_dump`. Back up the dump file, not the raw
   data folder.
+
+  Note the password handling: writing `-p<password>` directly on the command
+  line puts the secret into your shell history **and** makes it visible to any
+  user running `ps` while the dump runs. Passing it via the `MYSQL_PWD`
+  environment variable (read here from a variable your script sources from a
+  permissions-locked env file) avoids both. Also **check the dump is non-empty
+  before you trust it** — a failed dump still creates a 0-byte file and a
+  backup script that doesn't check will happily archive nothing:
+  ```bash
+  [ -s nextcloud-db.sql ] || { echo "DB dump is empty - aborting"; exit 1; }
+  ```
 - **Test a restore at least once — an untested backup is not a backup.** The
   only way to know your backup works is to rebuild from it: copy the dump and
   data to a scratch location (or a spare SD card / second Pi), restore, and
@@ -1252,7 +1311,87 @@ case-by-case under pressure. A scheme that works well in practice:
    revert a few minutes out, and only cancel the revert once you've confirmed
    access still works.
 
-## 24. Lessons learned
+## 24. A checklist to verify your setup
+
+Every section above told you to *do* something. This one tells you how to
+**prove it worked** — because the failure mode of a home server is silent: the
+backup that never ran, the firewall rule that Docker quietly bypassed, the
+auto-updater that stopped a month ago. Run this list after your initial build,
+then again every few months.
+
+Each check is a command whose output you can judge on the spot.
+
+**Access and identity**
+
+```bash
+hostname -I                       # matches the IP you reserved (step 5)?
+sudo ss -tulpn                    # every listening port, and what owns it
+```
+
+Look for anything listening on `0.0.0.0` that you did not intend to publish —
+that's the single most useful line in this checklist.
+
+**Security**
+
+```bash
+sudo sshd -T | grep -Ei 'passwordauthentication|permitrootlogin'
+sudo ufw status verbose
+sudo fail2ban-client status sshd
+```
+
+Expect `passwordauthentication no` and `permitrootlogin no` (step 6), a default
+deny policy (step 7), and a jail that shows a non-zero *total* failed count —
+zero totals after weeks of uptime usually means fail2ban is reading the wrong
+log source, not that nobody tried (step 8).
+
+**Patching**
+
+```bash
+systemctl list-timers 'apt-daily*' --all
+ls -lt /var/log/unattended-upgrades/ | head
+```
+
+You should see **two** timers — `apt-daily.timer` (refreshes the package list)
+and `apt-daily-upgrade.timer` (installs the updates) — each with a plausible
+`NEXT` and a recent `LAST`. Note the `.timer` suffix and the glob: querying the
+`.service` name instead returns "0 timers listed" and looks alarmingly like
+nothing is scheduled, when in fact it's the timer unit that holds the schedule.
+A genuinely stale `LAST` means you have been unpatched since whenever it
+stopped (step 10).
+
+**Storage and data**
+
+```bash
+df -h                             # nothing near 100%
+findmnt --target /mnt/storage     # external drive actually mounted, not an empty dir
+ls -lt /path/to/your/backups | head
+```
+
+The mount check matters more than it looks: if an external drive fails to
+mount, the mount point still exists as an empty directory on the boot card — so
+a backup script writes happily into it, filling your SD card while appearing to
+succeed (step 18).
+
+**Health**
+
+```bash
+vcgencmd get_throttled            # 0x0 = never throttled since boot
+systemctl --failed                # should list zero units
+docker ps --format '{{.Names}}\t{{.Status}}'
+```
+
+Any container showing `Restarting` is crash-looping, not running.
+
+**The two checks nothing on this list can do for you**
+
+- **Restore from a backup.** Only an actual restore proves a backup is real.
+  Everything above only proves a *file exists*.
+- **Confirm your alerts arrive.** Deliberately trip one — stop a monitored
+  container, or use your notification channel's test button — and check the
+  message reaches the device you actually look at. An alerting path is
+  untested until a message has travelled it end to end.
+
+## 25. Lessons learned
 
 - **A tunnel is still exposure.** "No port forwarding" doesn't mean private —
   treat every published hostname as a fresh exposure decision.
@@ -1272,7 +1411,7 @@ case-by-case under pressure. A scheme that works well in practice:
 - **Alerts are only useful if they reach a channel you actually check** — a
   dashboard nobody opens is not monitoring.
 
-## 25. Troubleshooting
+## 26. Troubleshooting
 
 - **SSH: "REMOTE HOST IDENTIFICATION HAS CHANGED!"** — appears after you
   re-flash or reinstall the Pi while keeping the same IP/hostname. The Pi has a
@@ -1319,7 +1458,7 @@ case-by-case under pressure. A scheme that works well in practice:
 - **fail2ban is running but never bans anyone** — it may be watching the wrong
   log source; see the journal-backend note in [step 8](#8-block-brute-force-attacks-fail2ban).
 
-## 26. Further reading
+## 27. Further reading
 
 - [Raspberry Pi official documentation](https://www.raspberrypi.com/documentation/)
 - [Tailscale docs](https://tailscale.com/kb/)
