@@ -35,14 +35,23 @@ replace it (including the brackets) with your real value.
 6. [Secure your SSH access](#6-secure-your-ssh-access)
 7. [Set up a firewall (ufw)](#7-set-up-a-firewall-ufw)
 8. [Block brute-force attacks (fail2ban)](#8-block-brute-force-attacks-fail2ban)
-9. [Turn on automatic security updates](#9-turn-on-automatic-security-updates)
-10. [Reaching your Pi from outside home](#10-reaching-your-pi-from-outside-home)
-11. [Running services with Docker](#11-running-services-with-docker)
-12. [Backups and maintenance](#12-backups-and-maintenance)
-13. [A tiered approval model for automation](#13-a-tiered-approval-model-for-automation)
-14. [Lessons learned](#14-lessons-learned)
-15. [Troubleshooting](#15-troubleshooting)
-16. [Further reading](#16-further-reading)
+9. [Watch your LAN for new or unknown devices](#9-watch-your-lan-for-new-or-unknown-devices)
+10. [Turn on automatic security updates](#10-turn-on-automatic-security-updates)
+11. [Reaching your Pi from outside home](#11-reaching-your-pi-from-outside-home)
+12. [Running services with Docker](#12-running-services-with-docker)
+13. [File sharing on your LAN with Samba](#13-file-sharing-on-your-lan-with-samba)
+14. [Uptime monitoring and alerts](#14-uptime-monitoring-and-alerts)
+15. [Download clients and media libraries](#15-download-clients-and-media-libraries)
+16. [Choosing a filesystem for attached storage](#16-choosing-a-filesystem-for-attached-storage)
+17. [Backups and maintenance](#17-backups-and-maintenance)
+18. [Versioning your configuration with git](#18-versioning-your-configuration-with-git)
+19. [Log management](#19-log-management)
+20. [Integrating third-party device and cloud APIs](#20-integrating-third-party-device-and-cloud-apis)
+21. [Task automation and scheduled jobs](#21-task-automation-and-scheduled-jobs)
+22. [A tiered approval model for automation](#22-a-tiered-approval-model-for-automation)
+23. [Lessons learned](#23-lessons-learned)
+24. [Troubleshooting](#24-troubleshooting)
+25. [Further reading](#25-further-reading)
 
 ---
 
@@ -54,7 +63,7 @@ A shopping/checklist before you start:
 |---|---|
 | A Raspberry Pi | Any model works; a **Pi 4 or Pi 5 with 4GB+ RAM** is comfortable for several Docker containers. This guide was built on a Pi 5 (8GB). |
 | Power supply | Use the **official supply for your model** (a Pi 5 wants 5V/5A USB-C). Underpowered supplies cause random crashes and SD-card corruption. |
-| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#14-lessons-learned). |
+| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#23-lessons-learned). |
 | A second computer | To flash the OS and to SSH in from. Windows, macOS, or Linux all work. |
 | Ethernet cable (recommended) | Wired is more reliable than Wi-Fi for a server that must stay reachable. |
 | Your home router's login | You'll need it later to reserve an IP address for the Pi. |
@@ -78,7 +87,7 @@ first. It's the one prerequisite skill.
 3. **Connect ethernet** from the Pi to your router, if you can. Wi-Fi works too
    and is configured during flashing.
 4. **Decide where the Pi will physically live.** For rare recovery situations
-   (see [tier 4](#13-a-tiered-approval-model-for-automation)), you'll occasionally
+   (see [tier 4](#22-a-tiered-approval-model-for-automation)), you'll occasionally
    need physical access — so somewhere reachable, not a five-hour round trip.
 
 Do **not** plug in the power supply yet. First boot happens after flashing.
@@ -283,6 +292,13 @@ network if it doesn't need to be broadly reachable:
 sudo ufw allow from 192.168.1.0/24 to any port 8096
 ```
 
+You can scope a rule to a **single client**, not just a whole subnet — handy
+for a service that only one other device (e.g. a VPN peer) should reach:
+
+```bash
+sudo ufw allow from 100.64.0.0/10 to any port 3001   # Tailscale-only access
+```
+
 **Important:** ufw only filters **direct inbound** traffic. Tunnels and VPNs
 (next section) make **outbound** connections, so they bypass these inbound
 rules entirely — the firewall does not protect you from exposure decisions you
@@ -340,7 +356,33 @@ sudo fail2ban-client set sshd unbanip 203.0.113.10
 Reference: [fail2ban
 docs](https://github.com/fail2ban/fail2ban).
 
-## 9. Turn on automatic security updates
+## 9. Watch your LAN for new or unknown devices
+
+fail2ban protects the Pi itself, but a home network has other angles: a new
+device joining your Wi-Fi (a guest's phone, a smart-home gadget, or something
+you didn't add) is worth knowing about, especially once the Pi is the thing
+watching the door.
+
+A lightweight approach is a small script that periodically scans the LAN (e.g.
+via `arp-scan` or by reading your router's DHCP client list) and diffs it
+against a known-devices list, alerting only on new entries:
+
+```bash
+sudo apt install arp-scan -y
+sudo arp-scan --localnet
+```
+
+Run this on a schedule (see [Task automation](#21-task-automation-and-scheduled-jobs))
+and keep a simple text or JSON file of MAC addresses you've already seen — a
+device isn't "new" twice. Route the alert to wherever you actually check
+notifications (see [Uptime monitoring and alerts](#14-uptime-monitoring-and-alerts))
+so it doesn't get lost in a log file nobody reads.
+
+This is a detection tool, not a firewall — it tells you something joined, it
+doesn't block it. Pair it with your router's own Wi-Fi password/guest-network
+settings for actual access control.
+
+## 10. Turn on automatic security updates
 
 `unattended-upgrades` applies security patches on its own, so a machine that's
 always on doesn't quietly fall behind.
@@ -360,7 +402,7 @@ Choose **Yes** when prompted to enable automatic updates. The behaviour lives in
 also schedule an automatic reboot for a quiet hour if a patch needs one.
 Reference: [unattended-upgrades docs](https://wiki.debian.org/UnattendedUpgrades).
 
-## 10. Reaching your Pi from outside home
+## 11. Reaching your Pi from outside home
 
 To use your services when you're away, you need a way in from the internet.
 These options aren't mutually exclusive — choose per service based on how public
@@ -420,15 +462,31 @@ sudo cloudflared service install   # run it automatically on boot
 > auth gate (Cloudflare Access or equivalent) in front of anything that
 > shouldn't be fully public.
 
+### Option D: Remote desktop (VNC) for GUI access
+
+SSH covers a terminal, but occasionally you want an actual graphical screen —
+e.g. a browser session for a one-time device-pairing flow. A VNC server (e.g.
+[wayvnc](https://github.com/any1/wayvnc) on Wayland, or `x11vnc`/TigerVNC on
+X11) exposes a remote desktop over the network. Treat it like any other
+service: keep it **LAN/VPN-only by default**, and only put it behind a public
+tunnel hostname if you specifically need to reach it from outside and
+understand that's a fresh exposure decision (see the warning above).
+
+One subtlety: a headless-server VNC setup often serves its **own virtual
+display**, not the physical console (`:0`) — so it won't show you anything that
+requires the real local display (some one-time device dialogs, for instance).
+If you hit that wall, it usually means a real monitor/keyboard session is the
+only way through, not a VNC config problem.
+
 ### A reasonable default mix
 
 - Services outsiders need (e.g. a public share) → **tunnel**, ideally behind an
   auth gate.
-- Admin tools, dashboards, download clients → **VPN-only or LAN-only**, never
-  publicly tunneled.
+- Admin tools, dashboards, download clients, remote desktop → **VPN-only or
+  LAN-only**, never publicly tunneled.
 - SSH → key-only, plus a **VPN-based fallback** path.
 
-## 11. Running services with Docker
+## 12. Running services with Docker
 
 Docker runs each app in its own isolated container — easy to install, update,
 and remove without cluttering the host. Install it with the official script:
@@ -497,7 +555,7 @@ Common starting points, by need:
 [Portainer](https://docs.portainer.io/) gives you a web UI over Docker if you'd
 rather not manage containers from the command line. For each new service,
 **decide how it should be reachable** (public tunnel, LAN-only, VPN-only) using
-[step 10](#10-reaching-your-pi-from-outside-home) — don't default everything to
+[step 11](#11-reaching-your-pi-from-outside-home) — don't default everything to
 "public" just because one service is. Reference: [Docker Engine install
 docs](https://docs.docker.com/engine/install/).
 
@@ -511,7 +569,7 @@ gotchas that trip people up on a first install.
 you're running from a microSD card, put Nextcloud's data directory on an
 attached SSD/USB drive instead of the card — both for space and because heavy
 file writes wear microSD cards out (see [Lessons
-learned](#14-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
+learned](#23-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
 
 **2. Write the Compose file.** Nextcloud needs two containers: the app itself
 and a database (MariaDB here — Nextcloud's own docs recommend it over SQLite
@@ -590,7 +648,7 @@ Each command adds one more entry (index `1`, `2`, `3`, ...) — don't reuse
 index `0`, that's reserved for the original setup hostname.
 
 **5. Decide how it's reachable, and if public, set `overwriteprotocol`.** If
-you're exposing it via a [tunnel](#10-reaching-your-pi-from-outside-home)
+you're exposing it via a [tunnel](#11-reaching-your-pi-from-outside-home)
 under HTTPS, tell Nextcloud it's being accessed over HTTPS even though the
 container itself only speaks plain HTTP internally — otherwise it will
 generate broken `http://` links and reject some requests:
@@ -625,9 +683,162 @@ docker compose up -d app
 places, and a backup needs all three or it's not a real backup: the database
 (`docker exec nextcloud-db mysqldump -u root -p nextcloud > nextcloud-db.sql`),
 the `./html` config/app folder, and the actual files in
-`/mnt/storage/nextcloud`. See [Backups and maintenance](#12-backups-and-maintenance).
+`/mnt/storage/nextcloud`. See [Backups and maintenance](#17-backups-and-maintenance).
 
-## 12. Backups and maintenance
+**9. Optional: expose a folder you already keep elsewhere as External Storage.**
+If you maintain notes or files outside Nextcloud's own data directory (a git
+repo, an Obsidian vault, another app's export folder), you can bind-mount that
+host path into the container and register it as **External Storage** (Settings
+→ Administration → External Storage) instead of duplicating the data. Two
+gotchas: the `files_external` app is disabled by default (enable it with
+`docker exec -it nextcloud php occ app:enable files_external` before the
+settings page will let you add one), and bind mounts preserve the **host**
+file's ownership — if the container's `www-data` user (typically uid `33`)
+doesn't already have permission on that host path, grant it explicitly rather
+than loosening the whole directory:
+
+```bash
+sudo setfacl -R -m u:33:rwX /path/to/your/folder
+sudo setfacl -R -d -m u:33:rwX /path/to/your/folder   # so new files inherit it too
+```
+
+## 13. File sharing on your LAN with Samba
+
+Nextcloud is great for sync-and-share, but sometimes you just want a folder
+that shows up as a normal network drive on Windows/macOS/Linux — no app, no
+login page, just drag-and-drop. That's what **Samba** (the SMB/CIFS protocol)
+is for.
+
+```bash
+sudo apt install samba -y
+```
+
+Define a share by adding a stanza to `/etc/samba/smb.conf` (back the file up
+first):
+
+```bash
+sudo cp /etc/samba/smb.conf /etc/samba/smb.conf.bak.$(date +%Y%m%d)
+sudo nano /etc/samba/smb.conf
+```
+
+```ini
+[shared]
+   path = /mnt/storage/shared
+   browseable = yes
+   read only = no
+   guest ok = no
+   valid users = <username>
+```
+
+Set a Samba password for your user (separate from their Linux login password)
+and restart the service:
+
+```bash
+sudo smbpasswd -a <username>
+sudo systemctl restart smbd
+```
+
+On another machine, connect to `\\<pi-ip>\shared` (Windows) or
+`smb://<pi-ip>/shared` (macOS/Linux). Keep Samba **LAN-only** — it has no
+business being reachable from the public internet, so don't open its ports (139,
+445) on a tunnel or router port-forward; ufw's default-deny-inbound from
+[step 7](#7-set-up-a-firewall-ufw) already covers this as long as you don't add
+an explicit allow rule for it beyond your local subnet.
+
+## 14. Uptime monitoring and alerts
+
+Once you have more than one service, you want to know the moment one goes down
+— not whenever you happen to check. [Uptime Kuma](https://github.com/louislam/uptime-kuma)
+(deployed in [step 12](#12-running-services-with-docker)) polls your services
+on an interval and can notify you the moment one fails a check.
+
+After it's running, add a **Monitor** per service (HTTP(s), TCP port, ping,
+etc.) pointing at its LAN address — monitor from inside the network, not
+through your public tunnel, so a tunnel hiccup doesn't look like the service
+itself is down. Then configure a **Notification** channel under Settings →
+Notifications so a failure actually reaches you instead of sitting unread in a
+dashboard: Telegram, Discord, email, and dozens of others are built in.
+
+A few practical choices worth making deliberately:
+
+- **Pick one primary alert channel** you actually check (a messaging app you
+  already use beats a new dashboard you'll forget to open).
+- **Set a sensible check interval and retry count** — too aggressive and a
+  single slow response pages you for nothing; too lax and you find out late.
+- **Keep the monitoring dashboard itself off the public internet** (VPN/LAN-only)
+  — it's an admin tool, and it also tells an attacker exactly what's running.
+
+## 15. Download clients and media libraries
+
+A download client (e.g. [qBittorrent](https://www.qbittorrent.org/)) and a
+media server (e.g. [Jellyfin](https://jellyfin.org/)) are two of the most
+common reasons people build a home server in the first place. A few points
+that aren't obvious the first time:
+
+- **Run it as its own service, not an ad-hoc terminal process**, so it survives
+  reboots and crashes. A systemd **user** service is a good fit for something
+  that only needs your own account's permissions:
+  ```bash
+  mkdir -p ~/.config/systemd/user
+  nano ~/.config/systemd/user/qbittorrent.service
+  ```
+  ```ini
+  [Unit]
+  Description=qBittorrent-nox
+
+  [Service]
+  ExecStart=/usr/bin/qbittorrent-nox --webui-port=8080
+  Restart=on-failure
+
+  [Install]
+  WantedBy=default.target
+  ```
+  ```bash
+  systemctl --user enable --now qbittorrent
+  ```
+- **Point downloads at a drive with room to grow**, not the boot SD card — see
+  [Choosing a filesystem for attached storage](#16-choosing-a-filesystem-for-attached-storage)
+  for the tradeoffs of what that drive should be formatted as.
+- **Keep the download client's web UI LAN/VPN-only.** It has no reason to be
+  publicly reachable, and admin-tool exposure is exactly the kind of thing
+  [step 11](#11-reaching-your-pi-from-outside-home) warns against defaulting to
+  public.
+- **A completion watcher is a natural automation candidate** — a small script
+  on a schedule that checks the client's API for newly finished downloads and
+  sends a notification, rather than you polling the UI. See [Task automation
+  and scheduled jobs](#21-task-automation-and-scheduled-jobs).
+
+## 16. Choosing a filesystem for attached storage
+
+The moment you attach an external SSD/USB drive for backups or bulk storage,
+you have to pick a filesystem — and this choice has real consequences that
+only show up once you're relying on the drive.
+
+| Filesystem | Unix permissions/ownership | Symlinks & hardlinks | Cross-platform (Windows/macOS) | Good for |
+|---|---|---|---|---|
+| ext4 | Full support | Full support | Linux only (needs extra drivers elsewhere) | A drive that only ever touches Linux — best default on the Pi itself |
+| exFAT | **Not supported** | **Not supported** | Yes, natively | A drive you also plug into Windows/macOS, and you're OK with the tradeoffs below |
+| NTFS | Partial (via `ntfs-3g`/`ntfs3`), can be flaky | Partial | Native on Windows, needs a driver elsewhere | Windows-primary use; watch for "dirty bit" mount failures on Linux |
+
+The exFAT and NTFS tradeoffs are easy to miss until a backup script fails
+part-way through:
+
+- **exFAT cannot store Unix ownership, permission bits, symlinks, or
+  hardlinks at all.** A backup tool like `rsync` that tries to preserve any of
+  these (`-a`/`-p`/`-H`) will error out mid-run. If you need exFAT for
+  cross-platform reasons, drop those flags (`--no-owner --no-group`, no `-H`)
+  and accept that incremental "hardlink to the previous backup" tricks
+  (`--link-dest`) silently fall back to full copies — plan disk space
+  accordingly.
+- **NTFS on Linux can get stuck with a "dirty bit"** if it wasn't unmounted
+  cleanly (e.g. unplugged from Windows without ejecting first), and some
+  drivers refuse to mount it read-write until that's cleared — a recurring
+  annoyance if the drive moves between operating systems often.
+- Whichever you choose, **verify what actually gets backed up matches what you
+  intended** — a filesystem that silently drops permissions or symlinks is a
+  worse surprise during a restore than during a test.
+
+## 17. Backups and maintenance
 
 A home server is only as safe as its backups. Build these habits early:
 
@@ -642,7 +853,10 @@ A home server is only as safe as its backups. Build these habits early:
   rsync -av --delete ~/apps/ /mnt/backup/apps/
   ```
   `-a` preserves permissions/timestamps, `-v` is verbose, `--delete` mirrors
-  deletions. Schedule it with `cron` (`crontab -e`) to run nightly.
+  deletions. Schedule it with `cron` (`crontab -e`) to run nightly. If the
+  destination drive is exFAT, see the caveats in [Choosing a filesystem for
+  attached storage](#16-choosing-a-filesystem-for-attached-storage) before you
+  reach for `-a`.
 - **Never copy a live database file — dump it instead.** Grabbing the files
   under a running database's data directory with `cp` or `rsync` can capture a
   half-written, corrupt snapshot that won't restore. Use the database's own dump
@@ -671,7 +885,140 @@ A home server is only as safe as its backups. Build these habits early:
 - **Keep a running TODO list** of unfinished items. A home server is rarely
   "done" in one sitting.
 
-## 13. A tiered approval model for automation
+## 18. Versioning your configuration with git
+
+Data backups (previous section) protect your *files*. It's also worth keeping
+a **version-controlled snapshot of your configuration** — compose files,
+systemd units, `/etc/fstab`, firewall rules, package lists — separately, in a
+private git repository. The value isn't redundancy with your backup drive;
+it's **history and diffs**: you can see exactly what changed, when, and revert
+a single bad edit without touching anything else.
+
+A few rules that matter more here than in a typical code repo:
+
+- **Never commit secrets.** Passwords, API tokens, and private keys don't
+  belong in git history — once committed, they're there forever even if you
+  delete the file later. Keep secrets in files outside the repo (or in a
+  `.gitignore`d directory) and reference them by path in the tracked configs.
+- **Scan every diff before committing**, ideally automatically — a simple
+  grep for common secret patterns (`password=`, `api_key`, PEM headers, etc.)
+  run against the changeset, blocking the commit if it trips. Cheap insurance
+  against an accidental paste.
+- **Keep the repo private**, and if it's pushed to a host like GitHub,
+  authenticate non-interactively (a credential helper or deploy key) so an
+  automated job can commit and push without a human typing a password.
+- This pairs naturally with [scheduled automation](#21-task-automation-and-scheduled-jobs)
+  — a nightly job that snapshots changed config, scans it, and commits only if
+  there's a real, clean delta.
+
+## 19. Log management
+
+Every service on the Pi writes logs somewhere, and left unmanaged they'll
+eventually fill your disk. `logrotate` is the standard Linux tool for keeping
+log files bounded — rotating (renaming/compressing) them on a schedule or size
+trigger and deleting old ones.
+
+Most distro packages already ship a logrotate config for their own logs, but
+anything writing to a custom path (an app under `~/.hermes/logs/`, a script's
+own log file, etc.) needs its own rule:
+
+```bash
+sudo nano /etc/logrotate.d/my-app
+```
+
+```text
+/home/<username>/apps/my-app/logs/*.log {
+    size 20M
+    rotate 7
+    compress
+    copytruncate
+}
+```
+
+- `size 20M` rotates once a log file passes 20MB (instead of, or in addition
+  to, a time-based trigger like `daily`).
+- `rotate 7` keeps 7 old rotations before deleting the oldest.
+- `compress` gzips rotated files to save space.
+- `copytruncate` copies the log then truncates the original in place — needed
+  for a program that keeps a log file open continuously and won't reopen a
+  freshly-renamed one on its own.
+
+No new timer is usually needed — most systems already run `logrotate` daily via
+a system timer or cron entry; a new config just needs to exist under
+`/etc/logrotate.d/` to be picked up on the next run. Test it without waiting:
+
+```bash
+sudo logrotate -f /etc/logrotate.d/my-app
+```
+
+## 20. Integrating third-party device and cloud APIs
+
+Home servers aren't limited to software you install — a lot of useful
+automation comes from **polling an existing device's cloud API** and acting on
+the result: a solar inverter, a smart thermostat, a weather station, a robot
+vacuum. The pattern is the same regardless of the specific device:
+
+1. **Find the vendor's official API** (a cloud OpenAPI is far more stable than
+   scraping a phone app's private endpoints, and less likely to break on an
+   app update). Register for API credentials if required.
+2. **Poll on an interval that matches how often the data actually changes** —
+   there's no benefit to hitting a slow-changing sensor every 10 seconds, and
+   an aggressive poll rate can hit a rate limit or even get your credentials
+   throttled.
+3. **Store just enough state to detect a *change*, not just a value** — e.g.
+   "was this already below threshold last run?" — so you alert once when a
+   condition starts, not on every single poll while it persists.
+4. **Alert through the same channel you already use** (see [Uptime monitoring
+   and alerts](#14-uptime-monitoring-and-alerts)) rather than inventing a new
+   place to check.
+5. **Handle the vendor's regional/datacenter quirks explicitly.** Some cloud
+   APIs route by account region (e.g. an India-registered account only working
+   against an India-specific endpoint) — a call that mysteriously 404s or
+   401s against the "obvious" global endpoint is often exactly this, not a
+   credentials problem.
+
+Run the poller as its own [scheduled job](#21-task-automation-and-scheduled-jobs),
+keep its credentials in a permissions-locked env file (not committed to git —
+see [step 18](#18-versioning-your-configuration-with-git)), and document any
+hard limits or gotchas you discover for the specific API next to the script,
+so the next debugging session doesn't start from zero.
+
+## 21. Task automation and scheduled jobs
+
+Most of what keeps a home server healthy without your daily attention is
+**scheduled, unattended jobs**: nightly backups, a weekly summary, a poller
+checking a device API, a log rotation. Linux gives you two built-in
+mechanisms:
+
+- **`cron`** — the classic choice, simplest for "run this script at this
+  time/interval." Edit your own crontab with `crontab -e`; each line is
+  `<minute> <hour> <day> <month> <weekday> <command>`.
+- **systemd timers** — more modern, integrate with `systemctl status`/`journalctl`
+  for easier debugging, and can express things like "run 5 minutes after boot"
+  that plain cron can't. More setup (a `.service` + a `.timer` unit) for the
+  same result.
+
+Either way, a few habits keep scheduled jobs from becoming their own source of
+surprises:
+
+- **Make failures loud, successes quiet.** A nightly job that silently fails
+  for a month is worse than one that pages you once. Route errors to your
+  alert channel; let clean runs produce no notification (or a single quiet
+  weekly summary) rather than a message every single night.
+- **Add pre-flight checks** before anything destructive or resource-heavy —
+  e.g. a backup script should confirm its target drive is actually mounted and
+  has free space *before* it starts, not discover that half-way through.
+  Abort loudly rather than proceeding on a bad assumption.
+- **Log what ran and what changed**, even briefly — when a job runs unattended
+  for months, "what actually happened last Tuesday" needs to be answerable
+  without guessing.
+- **Give any autonomous job (script, or an AI agent driving one) a bounded
+  scope and an explicit approval model** for anything beyond its routine
+  purpose — see the next section. It's worth deciding this up front rather
+  than case-by-case, especially if the job can install software, touch
+  networking, or push to a public repo unattended.
+
+## 22. A tiered approval model for automation
 
 If anything other than you personally changes this box — a cron job, a script,
 or an AI agent — decide up front **how much autonomy it gets**, rather than
@@ -689,13 +1036,16 @@ case-by-case under pressure. A scheme that works well in practice:
    revert a few minutes out, and only cancel the revert once you've confirmed
    access still works.
 
-## 14. Lessons learned
+## 23. Lessons learned
 
 - **A tunnel is still exposure.** "No port forwarding" doesn't mean private —
   treat every published hostname as a fresh exposure decision.
 - **Back up before every config change**, even trivial-seeming ones.
 - **microSD is a wear item.** Move to SSD/NVMe boot if you run anything
   write-heavy 24/7.
+- **exFAT and NTFS aren't Linux-native filesystems** — know what they can't
+  store (ownership, permissions, symlinks, hardlinks) *before* you point a
+  backup tool at one, not after a run fails partway through.
 - **Stage risky changes with a rollback path**, especially anything touching SSH
   or the firewall — that's the class of mistake that turns a five-minute fix
   into re-flashing a card.
@@ -703,8 +1053,10 @@ case-by-case under pressure. A scheme that works well in practice:
   connection, before you close your working session.
 - **Decide your automation/agent approval model before you need it**, not after
   something's gone wrong.
+- **Alerts are only useful if they reach a channel you actually check** — a
+  dashboard nobody opens is not monitoring.
 
-## 15. Troubleshooting
+## 24. Troubleshooting
 
 - **SSH: "REMOTE HOST IDENTIFICATION HAS CHANGED!"** — appears after you
   re-flash or reinstall the Pi while keeping the same IP/hostname. The Pi has a
@@ -716,7 +1068,7 @@ case-by-case under pressure. A scheme that works well in practice:
   ```
 - **Locked out after an SSH config change** — this is why you kept a session
   open. Fix the setting in that session, or use your [Tailscale SSH
-  fallback](#10-reaching-your-pi-from-outside-home). Last resort: power off, put
+  fallback](#11-reaching-your-pi-from-outside-home). Last resort: power off, put
   the card in another computer, and fix the file directly.
 - **`ping homeserver.local` doesn't resolve** — mDNS may be off on your network.
   Use the Pi's IP address from your router's device list instead.
@@ -730,8 +1082,15 @@ case-by-case under pressure. A scheme that works well in practice:
   vcgencmd measure_temp
   vcgencmd get_throttled   # 0x0 means no throttling has occurred
   ```
+- **A backup/rsync job errors out partway through on an external drive** —
+  suspect the filesystem before the script. See [Choosing a filesystem for
+  attached storage](#16-choosing-a-filesystem-for-attached-storage): exFAT in
+  particular rejects ownership, permission, and symlink/hardlink operations
+  outright.
+- **fail2ban is running but never bans anyone** — it may be watching the wrong
+  log source; see the journal-backend note in [step 8](#8-block-brute-force-attacks-fail2ban).
 
-## 16. Further reading
+## 25. Further reading
 
 - [Raspberry Pi official documentation](https://www.raspberrypi.com/documentation/)
 - [Tailscale docs](https://tailscale.com/kb/)
@@ -742,6 +1101,8 @@ case-by-case under pressure. A scheme that works well in practice:
 - [fail2ban](https://github.com/fail2ban/fail2ban)
 - [ufw (Uncomplicated Firewall)](https://help.ubuntu.com/community/UFW)
 - [unattended-upgrades (Debian wiki)](https://wiki.debian.org/UnattendedUpgrades)
+- [Samba documentation](https://www.samba.org/samba/docs/)
+- [Uptime Kuma](https://github.com/louislam/uptime-kuma)
 - [r/homelab](https://www.reddit.com/r/homelab/) and r/selfhosted for community
   setups and troubleshooting
 
