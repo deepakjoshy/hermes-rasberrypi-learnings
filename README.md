@@ -291,11 +291,24 @@ PubkeyAuthentication yes
 PermitRootLogin no
 ```
 
-Save (`Ctrl+O`, Enter) and exit (`Ctrl+X`). Then reload SSH:
+Save (`Ctrl+O`, Enter) and exit (`Ctrl+X`). **Check that the file still parses
+before you restart anything** — a typo here makes `sshd` refuse to start, and
+then no *new* connection can be made at all:
+
+```bash
+sudo sshd -t
+```
+
+No output (exit code 0) means the config is valid; any problem is printed with
+the offending line number. Only once it is clean, reload SSH:
 
 ```bash
 sudo systemctl restart ssh
 ```
+
+Restarting the SSH server does **not** drop sessions that are already open —
+each connection is handled by its own process — which is precisely why the
+"keep your first session open" rule saves you here.
 
 **Step 5 — Verify.** With your original session still open, start yet another
 new SSH connection. It should log in via your key and **refuse** any password
@@ -618,7 +631,7 @@ services:
     volumes:
       - ./data:/app/data
     ports:
-      - "3001:3001"
+      - "<pi-ip>:3001:3001"
     restart: unless-stopped
 ```
 
@@ -631,6 +644,13 @@ docker compose up -d
 - `up -d` starts the container in the background.
 - The `volumes:` line keeps the app's data in `./data` so it survives updates.
 - `restart: unless-stopped` brings it back automatically after a reboot or crash.
+- The `ports:` line deliberately binds to the Pi's own LAN address instead of
+  the bare `"3001:3001"` most examples show. The bare form publishes on
+  **every** interface, and since [Docker inserts its own iptables rules ahead
+  of ufw's](#7-set-up-a-firewall-ufw), your firewall will not stop it. Naming
+  the host address (or `127.0.0.1`, for something only the Pi itself needs to
+  reach) keeps an admin dashboard off any public interface by construction.
+  This assumes the address is stable — see [step 5](#5-give-the-pi-a-stable-address).
 
 Visit `http://<pi-ip>:3001` on your home network. To update later:
 `docker compose pull && docker compose up -d`. To remove it entirely:
