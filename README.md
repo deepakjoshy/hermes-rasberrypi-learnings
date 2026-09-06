@@ -768,6 +768,23 @@ A few practical choices worth making deliberately:
 - **Keep the monitoring dashboard itself off the public internet** (VPN/LAN-only)
   — it's an admin tool, and it also tells an attacker exactly what's running.
 
+**The blind spot: who watches the watcher?** Monitoring self-hosted *on the Pi
+it's monitoring* cannot tell you when the whole Pi is down — if the box loses
+power, drops off the network, or its disk fills, the monitor goes down with
+everything else and sends nothing. To catch a total-host failure you need a
+heartbeat checked from **outside** the Pi:
+
+- Have the Pi periodically "check in" to an external service — either a free
+  external monitor (e.g. [UptimeRobot](https://uptimerobot.com/) hitting your
+  public URL, if you expose one) or a **push/heartbeat** service like
+  [Healthchecks.io](https://healthchecks.io/) that alerts you when an expected
+  ping *fails to arrive*. Uptime Kuma itself supports a "Push" monitor type for
+  the inverse pattern (a script on another machine pings Kuma).
+- The key inversion: a normal monitor alerts on a *bad response*; a heartbeat
+  alerts on **silence**. Silence is exactly what you get when the Pi is dead, so
+  a heartbeat is the only kind of check that survives the failure it's meant to
+  report.
+
 ## 15. Download clients and media libraries
 
 A download client (e.g. [qBittorrent](https://www.qbittorrent.org/)) and a
