@@ -1181,6 +1181,18 @@ vacuum. The pattern is the same regardless of the specific device:
    401s against the "obvious" global endpoint is often exactly this, not a
    credentials problem.
 
+**A related pattern if you run an AI agent for home automation:** don't assume
+a bundled/default capability does everything its name implies. A common trap
+is a web-search backend that can find pages but silently cannot fetch and
+extract their actual content — the failure often looks like a generic error
+on every attempt rather than an obvious "not supported" message, so it's easy
+to miss until you actually check the logs. If that happens, the fix is the
+same third-party-API pattern as above: pick a purpose-built content-extraction
+API (several exist specifically for this — turning a raw page into clean
+text/markdown for an LLM to read), get a key, and point the relevant config
+at it. Confirm the fix by checking that the previously-failing calls succeed,
+not just that the config changed.
+
 Run the poller as its own [scheduled job](#22-task-automation-and-scheduled-jobs),
 keep its credentials in a permissions-locked env file (not committed to git —
 see [step 19](#19-versioning-your-configuration-with-git)), and document any
