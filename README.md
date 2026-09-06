@@ -302,7 +302,19 @@ sudo ufw allow from 100.64.0.0/10 to any port 3001   # Tailscale-only access
 **Important:** ufw only filters **direct inbound** traffic. Tunnels and VPNs
 (next section) make **outbound** connections, so they bypass these inbound
 rules entirely — the firewall does not protect you from exposure decisions you
-make with a tunnel. Reference: [ufw docs](https://help.ubuntu.com/community/UFW).
+make with a tunnel.
+
+**A second, sharper gotcha — Docker bypasses ufw.** When you publish a
+container port (`ports: - "8096:8096"` in Compose), Docker writes its own
+`iptables` rules *ahead* of ufw's, so the port becomes reachable on all
+interfaces **even if `ufw` says that port is denied**. `sudo ufw status` will
+happily show the port blocked while it's wide open. Two reliable fixes: (a)
+bind the container to loopback or the LAN address only —
+`ports: - "127.0.0.1:8096:8096"` (or your LAN IP) — so it's never published on
+the public interface in the first place; or (b) manage the exception in
+Docker's own `DOCKER-USER` iptables chain rather than in ufw. The loopback/LAN
+bind is the simpler habit and is usually what you want for an admin tool.
+Reference: [ufw docs](https://help.ubuntu.com/community/UFW).
 
 ## 8. Block brute-force attacks (fail2ban)
 
@@ -400,7 +412,19 @@ Choose **Yes** when prompted to enable automatic updates. The behaviour lives in
 **excluding things you'd rather upgrade deliberately** — Docker Engine, firmware
 — so an unattended update can't break a service while nobody's watching. You can
 also schedule an automatic reboot for a quiet hour if a patch needs one.
-Reference: [unattended-upgrades docs](https://wiki.debian.org/UnattendedUpgrades).
+
+**Confirm it actually works — don't just assume.** A silent auto-updater that
+isn't really running is worse than none, because you'll *believe* you're
+patched. Do a dry run (note the binary is singular, `unattended-upgrade`):
+
+```bash
+sudo unattended-upgrade --dry-run --debug
+```
+
+It prints which packages *would* be upgraded and which are held back, without
+changing anything. After real runs, the history lives in
+`/var/log/unattended-upgrades/` — check it occasionally to confirm patches are
+landing. Reference: [unattended-upgrades docs](https://wiki.debian.org/UnattendedUpgrades).
 
 ## 11. Reaching your Pi from outside home
 
@@ -730,13 +754,28 @@ sudo nano /etc/samba/smb.conf
    valid users = <username>
 ```
 
-Set a Samba password for your user (separate from their Linux login password)
+**Validate the config before restarting.** A typo in `smb.conf` can stop Samba
+from starting cleanly; `testparm` parses the file and reports errors without
+touching the running service:
+
+```bash
+testparm
+```
+
+If it prints your share stanza back without complaint, the syntax is good. Then
+set a Samba password for your user (separate from their Linux login password)
 and restart the service:
 
 ```bash
 sudo smbpasswd -a <username>
 sudo systemctl restart smbd
 ```
+
+A note on ownership: Samba enforces the *Linux* filesystem permissions on
+`path` as well as its own `valid users` list, so if writes fail despite a
+correct login, check that your user actually owns (or has group write on) the
+underlying directory — `ls -ld /mnt/storage/shared` — before suspecting the
+Samba config.
 
 On another machine, connect to `\\<pi-ip>\shared` (Windows) or
 `smb://<pi-ip>/shared` (macOS/Linux). Keep Samba **LAN-only** — it has no
@@ -813,6 +852,17 @@ that aren't obvious the first time:
   ```bash
   systemctl --user enable --now qbittorrent
   ```
+  **The gotcha that catches everyone with user services:** by default a systemd
+  *user* service only runs while you're actually logged in, and it stops the
+  moment you close your SSH session — and it won't start at boot. To let it run
+  unattended (persist after logout and start on boot), enable "linger" for your
+  account once:
+  ```bash
+  sudo loginctl enable-linger <username>
+  ```
+  Without this, you'll swear the service is enabled yet find it dead every time
+  you reconnect. (If you need it to run fully independently of your user, a
+  system-level service or a Docker container is the alternative.)
 - **Point downloads at a drive with room to grow**, not the boot SD card — see
   [Choosing a filesystem for attached storage](#16-choosing-a-filesystem-for-attached-storage)
   for the tradeoffs of what that drive should be formatted as.
@@ -967,6 +1017,25 @@ a system timer or cron entry; a new config just needs to exist under
 ```bash
 sudo logrotate -f /etc/logrotate.d/my-app
 ```
+
+**Don't forget the systemd journal — it's separate from `logrotate`.** Most
+service logs (anything shown by `journalctl`) are managed by `systemd-journald`,
+not by logrotate, so a logrotate rule won't touch them. Check how much space
+the journal is using and cap it so it can't grow without bound:
+
+```bash
+journalctl --disk-usage
+sudo journalctl --vacuum-size=200M    # trim now to a 200MB ceiling
+sudo journalctl --vacuum-time=2weeks  # or drop anything older than 2 weeks
+```
+
+For a permanent cap, set `SystemMaxUse=200M` in
+`/etc/systemd/journald.conf` and restart with
+`sudo systemctl restart systemd-journald`. One Pi-specific note: by default
+many images keep the journal only in RAM (`/run`, wiped on reboot). If you want
+logs to **survive a reboot** — useful for diagnosing a crash that rebooted the
+Pi — set `Storage=persistent` in the same file, which moves them to
+`/var/log/journal/` (mind the extra SD-card writes if you're microSD-based).
 
 ## 20. Integrating third-party device and cloud APIs
 
