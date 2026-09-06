@@ -42,16 +42,17 @@ replace it (including the brackets) with your real value.
 13. [File sharing on your LAN with Samba](#13-file-sharing-on-your-lan-with-samba)
 14. [Uptime monitoring and alerts](#14-uptime-monitoring-and-alerts)
 15. [Download clients and media libraries](#15-download-clients-and-media-libraries)
-16. [Choosing a filesystem for attached storage](#16-choosing-a-filesystem-for-attached-storage)
-17. [Backups and maintenance](#17-backups-and-maintenance)
-18. [Versioning your configuration with git](#18-versioning-your-configuration-with-git)
-19. [Log management](#19-log-management)
-20. [Integrating third-party device and cloud APIs](#20-integrating-third-party-device-and-cloud-apis)
-21. [Task automation and scheduled jobs](#21-task-automation-and-scheduled-jobs)
-22. [A tiered approval model for automation](#22-a-tiered-approval-model-for-automation)
-23. [Lessons learned](#23-lessons-learned)
-24. [Troubleshooting](#24-troubleshooting)
-25. [Further reading](#25-further-reading)
+16. [Running a local AI model with Ollama](#16-running-a-local-ai-model-with-ollama)
+17. [Choosing a filesystem for attached storage](#17-choosing-a-filesystem-for-attached-storage)
+18. [Backups and maintenance](#18-backups-and-maintenance)
+19. [Versioning your configuration with git](#19-versioning-your-configuration-with-git)
+20. [Log management](#20-log-management)
+21. [Integrating third-party device and cloud APIs](#21-integrating-third-party-device-and-cloud-apis)
+22. [Task automation and scheduled jobs](#22-task-automation-and-scheduled-jobs)
+23. [A tiered approval model for automation](#23-a-tiered-approval-model-for-automation)
+24. [Lessons learned](#24-lessons-learned)
+25. [Troubleshooting](#25-troubleshooting)
+26. [Further reading](#26-further-reading)
 
 ---
 
@@ -63,7 +64,7 @@ A shopping/checklist before you start:
 |---|---|
 | A Raspberry Pi | Any model works; a **Pi 4 or Pi 5 with 4GB+ RAM** is comfortable for several Docker containers. This guide was built on a Pi 5 (8GB). |
 | Power supply | Use the **official supply for your model** (a Pi 5 wants 5V/5A USB-C). Underpowered supplies cause random crashes and SD-card corruption. |
-| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#23-lessons-learned). |
+| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#24-lessons-learned). |
 | A second computer | To flash the OS and to SSH in from. Windows, macOS, or Linux all work. |
 | Ethernet cable (recommended) | Wired is more reliable than Wi-Fi for a server that must stay reachable. |
 | Your home router's login | You'll need it later to reserve an IP address for the Pi. |
@@ -87,7 +88,7 @@ first. It's the one prerequisite skill.
 3. **Connect ethernet** from the Pi to your router, if you can. Wi-Fi works too
    and is configured during flashing.
 4. **Decide where the Pi will physically live.** For rare recovery situations
-   (see [tier 4](#22-a-tiered-approval-model-for-automation)), you'll occasionally
+   (see [tier 4](#23-a-tiered-approval-model-for-automation)), you'll occasionally
    need physical access — so somewhere reachable, not a five-hour round trip.
 
 Do **not** plug in the power supply yet. First boot happens after flashing.
@@ -384,7 +385,7 @@ sudo apt install arp-scan -y
 sudo arp-scan --localnet
 ```
 
-Run this on a schedule (see [Task automation](#21-task-automation-and-scheduled-jobs))
+Run this on a schedule (see [Task automation](#22-task-automation-and-scheduled-jobs))
 and keep a simple text or JSON file of MAC addresses you've already seen — a
 device isn't "new" twice. Route the alert to wherever you actually check
 notifications (see [Uptime monitoring and alerts](#14-uptime-monitoring-and-alerts))
@@ -593,7 +594,7 @@ gotchas that trip people up on a first install.
 you're running from a microSD card, put Nextcloud's data directory on an
 attached SSD/USB drive instead of the card — both for space and because heavy
 file writes wear microSD cards out (see [Lessons
-learned](#23-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
+learned](#24-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
 
 **2. Write the Compose file.** Nextcloud needs two containers: the app itself
 and a database (MariaDB here — Nextcloud's own docs recommend it over SQLite
@@ -707,7 +708,7 @@ docker compose up -d app
 places, and a backup needs all three or it's not a real backup: the database
 (`docker exec nextcloud-db mysqldump -u root -p nextcloud > nextcloud-db.sql`),
 the `./html` config/app folder, and the actual files in
-`/mnt/storage/nextcloud`. See [Backups and maintenance](#17-backups-and-maintenance).
+`/mnt/storage/nextcloud`. See [Backups and maintenance](#18-backups-and-maintenance).
 
 **9. Optional: expose a folder you already keep elsewhere as External Storage.**
 If you maintain notes or files outside Nextcloud's own data directory (a git
@@ -864,7 +865,7 @@ that aren't obvious the first time:
   you reconnect. (If you need it to run fully independently of your user, a
   system-level service or a Docker container is the alternative.)
 - **Point downloads at a drive with room to grow**, not the boot SD card — see
-  [Choosing a filesystem for attached storage](#16-choosing-a-filesystem-for-attached-storage)
+  [Choosing a filesystem for attached storage](#17-choosing-a-filesystem-for-attached-storage)
   for the tradeoffs of what that drive should be formatted as.
 - **Keep the download client's web UI LAN/VPN-only.** It has no reason to be
   publicly reachable, and admin-tool exposure is exactly the kind of thing
@@ -873,9 +874,101 @@ that aren't obvious the first time:
 - **A completion watcher is a natural automation candidate** — a small script
   on a schedule that checks the client's API for newly finished downloads and
   sends a notification, rather than you polling the UI. See [Task automation
-  and scheduled jobs](#21-task-automation-and-scheduled-jobs).
+  and scheduled jobs](#22-task-automation-and-scheduled-jobs).
 
-## 16. Choosing a filesystem for attached storage
+**A worked example — a media server (Plex/Jellyfin) reading an existing library.**
+Unlike the download client above, a media server is usually happiest with
+**host networking** rather than a mapped port — its local-network discovery
+protocol (DLNA) and remote-access features work more reliably that way, and it
+sidesteps having to hand-map a dozen individual ports:
+
+```bash
+mkdir -p ~/apps/plex && cd ~/apps/plex
+nano docker-compose.yml
+```
+
+```yaml
+services:
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    network_mode: host
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=<Your/Timezone>
+      - VERSION=docker
+    volumes:
+      - ./config:/config
+      - /mnt/storage/movies:/movies:ro
+    restart: unless-stopped
+```
+
+- `network_mode: host` shares the Pi's own network stack directly with the
+  container — no `ports:` mapping needed, but it also means the container isn't
+  isolated from your LAN the way a normally-networked container is. Keep this
+  in mind when deciding what else runs alongside it.
+- Mount your media **read-only** (`:ro`) if the server only needs to *serve*
+  files, not manage them — one less way a container bug could touch your
+  library.
+- `PUID`/`PGID` matter here more than in many containers: point them at the
+  Linux user that already owns your media files, or Plex's process won't be
+  able to read them even though the volume mounted successfully.
+- Claim the server via the vendor's web setup (`http://<pi-ip>:32400/web`) on
+  first run, then keep it **LAN/VPN-only** by default — like other admin-ish
+  services in this guide, only tunnel it publicly if you deliberately want
+  people outside your household streaming from it.
+
+## 16. Running a local AI model with Ollama
+Not everything you run on a home server needs a cloud API. [Ollama](https://ollama.com/)
+lets the Pi itself serve small open-weight language models over a local HTTP API —
+useful for offline text tasks, experimenting without per-token cost, or feeding
+a local automation script without sending data anywhere.
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+sudo systemctl enable --now ollama
+```
+
+This installs `ollama` as a systemd service (`ollama.service`) listening on
+`localhost:11434` by default — **not** exposed to your LAN or the internet
+unless you deliberately change its bind address, which is the right default
+for something with no built-in authentication of its own.
+
+Pull a model and try it:
+
+```bash
+ollama pull llama3.2:1b
+ollama run llama3.2:1b "Explain what a DHCP reservation does, in one sentence."
+```
+
+A few practical notes specific to running this on a Pi rather than a desktop
+GPU machine:
+
+- **Model size is the real constraint, not just RAM.** A Pi has no dedicated
+  GPU, so everything runs on the CPU — pick small models (parameter counts in
+  the 1B-3B range, e.g. `llama3.2:1b`, `qwen3:1.7b`) rather than anything
+  marketed for desktop/workstation use. Expect noticeably slower responses
+  than a cloud model; this is for lightweight local tasks, not a chat
+  replacement for a hosted frontier model.
+- **Keep it loopback-only unless you have a specific reason not to.** Ollama's
+  API has no authentication by default — if you bind it to `0.0.0.0` to reach
+  it from another device, put it behind the same LAN/VPN-only discipline as
+  any other admin-ish service in this guide (see [Reaching your Pi from
+  outside home](#11-reaching-your-pi-from-outside-home)), never a public tunnel.
+- **It's just another API endpoint to your automation.** Anything that already
+  talks to a cloud LLM API can usually point at `http://localhost:11434` instead
+  for tasks that don't need a bigger model — handy for a scheduled job (see
+  [Task automation and scheduled jobs](#22-task-automation-and-scheduled-jobs))
+  that would rather not spend cloud API quota on a trivial classification or
+  formatting task.
+- **Free disk space before pulling models** — even "small" models are 1-2GB+
+  each, and they add up on a boot microSD the same way any other write-heavy
+  data does (see [Choosing a filesystem for attached storage](#17-choosing-a-filesystem-for-attached-storage)),
+  or store the Ollama model directory on external storage via the
+  `OLLAMA_MODELS` environment variable if space is tight.
+
+## 17. Choosing a filesystem for attached storage
 
 The moment you attach an external SSD/USB drive for backups or bulk storage,
 you have to pick a filesystem — and this choice has real consequences that
@@ -905,7 +998,7 @@ part-way through:
   intended** — a filesystem that silently drops permissions or symlinks is a
   worse surprise during a restore than during a test.
 
-## 17. Backups and maintenance
+## 18. Backups and maintenance
 
 A home server is only as safe as its backups. Build these habits early:
 
@@ -922,7 +1015,7 @@ A home server is only as safe as its backups. Build these habits early:
   `-a` preserves permissions/timestamps, `-v` is verbose, `--delete` mirrors
   deletions. Schedule it with `cron` (`crontab -e`) to run nightly. If the
   destination drive is exFAT, see the caveats in [Choosing a filesystem for
-  attached storage](#16-choosing-a-filesystem-for-attached-storage) before you
+  attached storage](#17-choosing-a-filesystem-for-attached-storage) before you
   reach for `-a`.
 - **Never copy a live database file — dump it instead.** Grabbing the files
   under a running database's data directory with `cp` or `rsync` can capture a
@@ -952,7 +1045,7 @@ A home server is only as safe as its backups. Build these habits early:
 - **Keep a running TODO list** of unfinished items. A home server is rarely
   "done" in one sitting.
 
-## 18. Versioning your configuration with git
+## 19. Versioning your configuration with git
 
 Data backups (previous section) protect your *files*. It's also worth keeping
 a **version-controlled snapshot of your configuration** — compose files,
@@ -974,11 +1067,11 @@ A few rules that matter more here than in a typical code repo:
 - **Keep the repo private**, and if it's pushed to a host like GitHub,
   authenticate non-interactively (a credential helper or deploy key) so an
   automated job can commit and push without a human typing a password.
-- This pairs naturally with [scheduled automation](#21-task-automation-and-scheduled-jobs)
+- This pairs naturally with [scheduled automation](#22-task-automation-and-scheduled-jobs)
   — a nightly job that snapshots changed config, scans it, and commits only if
   there's a real, clean delta.
 
-## 19. Log management
+## 20. Log management
 
 Every service on the Pi writes logs somewhere, and left unmanaged they'll
 eventually fill your disk. `logrotate` is the standard Linux tool for keeping
@@ -1037,7 +1130,7 @@ logs to **survive a reboot** — useful for diagnosing a crash that rebooted the
 Pi — set `Storage=persistent` in the same file, which moves them to
 `/var/log/journal/` (mind the extra SD-card writes if you're microSD-based).
 
-## 20. Integrating third-party device and cloud APIs
+## 21. Integrating third-party device and cloud APIs
 
 Home servers aren't limited to software you install — a lot of useful
 automation comes from **polling an existing device's cloud API** and acting on
@@ -1063,13 +1156,13 @@ vacuum. The pattern is the same regardless of the specific device:
    401s against the "obvious" global endpoint is often exactly this, not a
    credentials problem.
 
-Run the poller as its own [scheduled job](#21-task-automation-and-scheduled-jobs),
+Run the poller as its own [scheduled job](#22-task-automation-and-scheduled-jobs),
 keep its credentials in a permissions-locked env file (not committed to git —
-see [step 18](#18-versioning-your-configuration-with-git)), and document any
+see [step 18](#19-versioning-your-configuration-with-git)), and document any
 hard limits or gotchas you discover for the specific API next to the script,
 so the next debugging session doesn't start from zero.
 
-## 21. Task automation and scheduled jobs
+## 22. Task automation and scheduled jobs
 
 Most of what keeps a home server healthy without your daily attention is
 **scheduled, unattended jobs**: nightly backups, a weekly summary, a poller
@@ -1104,7 +1197,7 @@ surprises:
   than case-by-case, especially if the job can install software, touch
   networking, or push to a public repo unattended.
 
-## 22. A tiered approval model for automation
+## 23. A tiered approval model for automation
 
 If anything other than you personally changes this box — a cron job, a script,
 or an AI agent — decide up front **how much autonomy it gets**, rather than
@@ -1122,7 +1215,7 @@ case-by-case under pressure. A scheme that works well in practice:
    revert a few minutes out, and only cancel the revert once you've confirmed
    access still works.
 
-## 23. Lessons learned
+## 24. Lessons learned
 
 - **A tunnel is still exposure.** "No port forwarding" doesn't mean private —
   treat every published hostname as a fresh exposure decision.
@@ -1142,7 +1235,7 @@ case-by-case under pressure. A scheme that works well in practice:
 - **Alerts are only useful if they reach a channel you actually check** — a
   dashboard nobody opens is not monitoring.
 
-## 24. Troubleshooting
+## 25. Troubleshooting
 
 - **SSH: "REMOTE HOST IDENTIFICATION HAS CHANGED!"** — appears after you
   re-flash or reinstall the Pi while keeping the same IP/hostname. The Pi has a
@@ -1170,13 +1263,13 @@ case-by-case under pressure. A scheme that works well in practice:
   ```
 - **A backup/rsync job errors out partway through on an external drive** —
   suspect the filesystem before the script. See [Choosing a filesystem for
-  attached storage](#16-choosing-a-filesystem-for-attached-storage): exFAT in
+  attached storage](#17-choosing-a-filesystem-for-attached-storage): exFAT in
   particular rejects ownership, permission, and symlink/hardlink operations
   outright.
 - **fail2ban is running but never bans anyone** — it may be watching the wrong
   log source; see the journal-backend note in [step 8](#8-block-brute-force-attacks-fail2ban).
 
-## 25. Further reading
+## 26. Further reading
 
 - [Raspberry Pi official documentation](https://www.raspberrypi.com/documentation/)
 - [Tailscale docs](https://tailscale.com/kb/)
