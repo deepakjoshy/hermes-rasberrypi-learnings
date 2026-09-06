@@ -70,7 +70,12 @@ A shopping/checklist before you start:
 | Your home router's login | You'll need it later to reserve an IP address for the Pi. |
 
 You do **not** need a monitor, keyboard, or mouse for the Pi — this guide sets
-it up "headless" (over the network) from your second computer.
+it up "headless" (over the network) from your second computer. That said,
+nothing stops you from occasionally plugging in a monitor/keyboard/mouse (or
+pairing a Bluetooth set) later for a one-off desktop session — a "headless
+server most of the time" and "occasional physical workstation" aren't mutually
+exclusive, and several official Pi OS images ship a lightweight desktop
+environment by default even on a server-focused install.
 
 If you've never used SSH (the tool for logging into another machine over the
 network), skim [DigitalOcean's SSH
@@ -92,6 +97,26 @@ first. It's the one prerequisite skill.
    need physical access — so somewhere reachable, not a five-hour round trip.
 
 Do **not** plug in the power supply yet. First boot happens after flashing.
+
+**A note on overclocking.** Raspberry Pi OS lets you push the CPU past its
+stock frequency (e.g. via `raspi-config`'s Performance options, or directly by
+setting `arm_freq`/`over_voltage` in `/boot/firmware/config.txt`). It's a real
+option once everything else is stable and you want more headroom for several
+Docker containers — but treat it as a deliberate, monitored choice, not a
+default:
+
+- Always pair a frequency bump with adequate cooling (a case fan, not just a
+  passive heatsink, once you're pushing past stock) — overclocking raises heat
+  output and a Pi that's already running hot has less thermal margin to spare.
+- Check for throttling regularly, not just once after applying the change:
+  ```bash
+  vcgencmd measure_temp
+  vcgencmd get_throttled   # 0x0 means no throttling has occurred
+  ```
+- If you inherit or revisit a Pi and don't remember setting an overclock,
+  check `/boot/firmware/config.txt` for `arm_freq`/`over_voltage` lines before
+  assuming odd instability is a software problem — it's an easy thing to set
+  once and then forget about.
 
 ## 3. Flash and install the OS
 
@@ -1158,7 +1183,7 @@ vacuum. The pattern is the same regardless of the specific device:
 
 Run the poller as its own [scheduled job](#22-task-automation-and-scheduled-jobs),
 keep its credentials in a permissions-locked env file (not committed to git —
-see [step 18](#19-versioning-your-configuration-with-git)), and document any
+see [step 19](#19-versioning-your-configuration-with-git)), and document any
 hard limits or gotchas you discover for the specific API next to the script,
 so the next debugging session doesn't start from zero.
 
@@ -1255,6 +1280,19 @@ case-by-case under pressure. A scheme that works well in practice:
   ```bash
   docker compose logs -f
   ```
+- **An external drive intermittently fails to auto-mount after an unclean
+  disconnect** — common with NTFS-formatted drives that get unplugged without
+  "safely eject" first, leaving a "dirty" filesystem flag Linux won't
+  auto-mount read-write. A small boot-time check-and-repair script (using
+  `ntfsfix -n` to detect the dirty state, then `ntfsfix` to clear it before
+  retrying the mount) turns this from a manual fix into something that
+  self-heals on every boot — see [Task automation and scheduled
+  jobs](#22-task-automation-and-scheduled-jobs) for wiring a script to run at
+  boot via systemd. **Remember to retire or rewrite this kind of script if you
+  later reformat the drive to a filesystem without a dirty-bit concept** (e.g.
+  exFAT — see [Choosing a filesystem for attached
+  storage](#17-choosing-a-filesystem-for-attached-storage)); it'll harmlessly
+  no-op forever rather than fail loudly, which is easy to forget about.
 - **Pi feels slow or reboots randomly** — suspect power or heat first. Check the
   temperature and for under-voltage warnings:
   ```bash
