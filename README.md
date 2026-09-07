@@ -1077,15 +1077,19 @@ testparm -s
 
 If it prints your share stanza back without complaint, the syntax is good.
 (`-s` skips the "Press enter to see a dump of your service definitions" prompt
-that plain `testparm` stops at — which is also what lets you use it inside a
-script.) Then
-set a Samba password for your user (separate from their Linux login password)
-and restart the service:
+that plain `testparm` stops at, which is also what lets you use it in a script.)
+Then set a Samba password for your user — separate from their Linux login
+password — and have `smbd` pick up the new share:
 
 ```bash
 sudo smbpasswd -a <username>
-sudo systemctl restart smbd
+sudo systemctl reload smbd
 ```
+
+Prefer `reload` over `restart` here: it signals `smbd` to re-read `smb.conf`
+without tearing down existing connections, so nobody's in-progress file copy
+dies because you added a share. (`smbpasswd` needs no restart at all — the
+password database is read live.)
 
 A note on ownership: Samba enforces the *Linux* filesystem permissions on
 `path` as well as its own `valid users` list, so if writes fail despite a
@@ -1600,10 +1604,11 @@ A home server is only as safe as its backups. Build these habits early:
   rsync -av --delete ~/apps/ /mnt/backup/apps/
   ```
   `-a` preserves permissions/timestamps, `-v` is verbose, `--delete` mirrors
-  deletions. Schedule it with `cron` (`crontab -e`) to run nightly. If the
-  destination drive is exFAT, see the caveats in [Choosing a filesystem for
-  attached storage](#17-choosing-a-filesystem-for-attached-storage) before you
-  reach for `-a`.
+  deletions. Schedule it with `cron` (`crontab -e`) to run nightly — noting the
+  crontab quoting and `PATH` traps in [step 24](#24-task-automation-and-scheduled-jobs).
+  If the destination drive is exFAT, see the caveats in [Choosing a filesystem
+  for attached storage](#17-choosing-a-filesystem-for-attached-storage) before
+  you reach for `-a`.
 
   The `mountpoint` guard on the first line is not optional padding. If the
   external drive fails to mount, `/mnt/backup` still exists as an empty
@@ -1612,6 +1617,16 @@ A home server is only as safe as its backups. Build these habits early:
   returns non-zero for a plain directory, so the job stops instead. Put the
   same guard in front of every scheduled job that writes to attached storage
   (see [step 27](#27-a-checklist-to-verify-your-setup)).
+
+  **Check `rsync`'s exit code, don't just check that it ran.** A run that copies
+  most files but fails on some — one unreadable file, one attribute the
+  destination filesystem can't store — still transfers everything else and then
+  exits **23** ("some files/attrs were not transferred"); **24** means files
+  vanished mid-run. Only `0` is a clean backup, so a scheduled job should test
+  it and say so:
+  ```bash
+  rsync -av --delete ~/apps/ /mnt/backup/apps/ || { echo "rsync failed (exit $?)"; exit 1; }
+  ```
 - **Never copy a live database file — dump it instead.** Grabbing the files
   under a running database's data directory with `cp` or `rsync` can capture a
   half-written, corrupt snapshot that won't restore. Use the database's own dump
@@ -1871,6 +1886,22 @@ mechanisms:
 - **`cron`** — the classic choice, simplest for "run this script at this
   time/interval." Edit your own crontab with `crontab -e`; each line is
   `<minute> <hour> <day> <month> <weekday> <command>`.
+
+  Two things about crontab lines bite almost everyone once:
+
+  - **A bare `%` is not a percent sign.** In a crontab, an unescaped `%` is
+    turned into a newline and everything after the first one is fed to the
+    command as standard input. So the timestamped-backup idiom used elsewhere
+    in this guide, `cp file file.bak.$(date +%Y%m%d)`, is *silently truncated*
+    when pasted straight into a crontab — you get `date +` and an error. Escape
+    each one (`\%Y\%m\%d`), or better, put the command in a script file and
+    schedule the script. See `man 5 crontab`.
+  - **cron gives you a minimal environment**, not your interactive shell's. It
+    runs commands under `/bin/sh` and does not read your `.bashrc`/`.profile`,
+    so aliases, virtualenv activation, and anything found via a customised
+    `PATH` are all absent. Use **absolute paths** for every binary and file in a
+    cron job (`/usr/bin/rsync`, not `rsync`), or set `PATH=` explicitly at the
+    top of the crontab.
 - **systemd timers** — more modern, integrate with `systemctl status`/`journalctl`
   for easier debugging, and can express things like "run 5 minutes after boot"
   that plain cron can't. More setup (a `.service` + a `.timer` unit) for the
