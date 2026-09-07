@@ -386,7 +386,13 @@ bind the container to loopback or the LAN address only —
 the public interface in the first place; or (b) manage the exception in
 Docker's own `DOCKER-USER` iptables chain rather than in ufw. The loopback/LAN
 bind is the simpler habit and is usually what you want for an admin tool.
-Reference: [ufw docs](https://help.ubuntu.com/community/UFW).
+Note the precise scope: Docker creates these rules for **bridge** networks
+only. A container using `network_mode: host` (or ipvlan/macvlan) gets no Docker
+firewall rules at all and is filtered by ufw exactly like any other process on
+the host — see the media-server example in
+[step 15](#15-download-clients-and-media-libraries).
+References: [ufw docs](https://help.ubuntu.com/community/UFW),
+[Docker packet filtering](https://docs.docker.com/engine/network/packet-filtering-firewalls/).
 
 **And the mirror image — containers are not on your LAN.** When a container
 reaches a service *outside* itself (on the host, or on another machine), the
@@ -1209,9 +1215,16 @@ services:
   Linux user that already owns your media files, or Plex's process won't be
   able to read them even though the volume mounted successfully.
 - Claim the server via the vendor's web setup (`http://<pi-ip>:32400/web`) on
-  first run. Note that with `network_mode: host` the container ignores ufw the
-  same way a published port does, so "LAN-only" here is a choice you make in
-  the media server's own settings, not something the firewall enforces for you.
+  first run. Host networking is the one case where the [Docker/ufw
+  bypass](#7-set-up-a-firewall-ufw) does **not** apply: Docker writes firewall
+  rules only for *bridge* networks, so a host-networked container listens like
+  an ordinary host process and your ufw rules do govern it. That cuts both
+  ways — nothing is published for you either, so add the allow rules yourself:
+  ```bash
+  sudo ufw allow from 192.168.1.0/24 to any port 32400 proto tcp comment 'Plex-LAN'
+  ```
+  Reference: [Docker — packet filtering and
+  firewalls](https://docs.docker.com/engine/network/packet-filtering-firewalls/).
 
 ## 16. Running a local AI model with Ollama
 
@@ -1297,9 +1310,6 @@ part-way through:
   cleanly (e.g. unplugged from Windows without ejecting first), and some
   drivers refuse to mount it read-write until that's cleared — a recurring
   annoyance if the drive moves between operating systems often.
-- Whichever you choose, **verify what actually gets backed up matches what you
-  intended** — a filesystem that silently drops permissions or symlinks is a
-  worse surprise during a restore than during a test.
 
 ## 18. Memory, swap, and container resource limits
 
@@ -2183,10 +2193,16 @@ keeps dying without an obvious log reason, check for an OOM kill (step 18).
   the card in another computer, and fix the file directly.
 - **`ping homeserver.local` doesn't resolve** — mDNS may be off on your network.
   Use the Pi's IP address from your router's device list instead.
-- **A container won't start** — check its logs:
+- **A container won't start** — establish whether it exited or is crash-looping
+  before reading logs, and read the *last* output rather than following a
+  stream that may already be over:
   ```bash
-  docker compose logs -f
+  docker compose ps -a                        # -a also lists exited containers
+  docker compose logs --tail=50 <service>
   ```
+  A `Restarting` status means it starts and dies repeatedly — check for an OOM
+  kill ([step 18](#18-memory-swap-and-container-resource-limits)) or a
+  permissions problem on a mounted volume before suspecting the image itself.
 - **An external drive intermittently fails to auto-mount after an unclean
   disconnect** — common with NTFS-formatted drives that get unplugged without
   "safely eject" first, leaving a "dirty" filesystem flag Linux won't
