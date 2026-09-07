@@ -525,8 +525,17 @@ confirm both take effect:
 
 ```bash
 sudo fail2ban-client set sshd banip 203.0.113.10
+sudo fail2ban-client status sshd | grep 'Banned IP list'   # should list it
 sudo fail2ban-client set sshd unbanip 203.0.113.10
+sudo fail2ban-client status sshd | grep 'Banned IP list'   # should be empty again
 ```
+
+Both `set` commands print `1` (the number of addresses affected); the two
+`status` checks are what actually prove the ban was applied and then removed.
+Note this only tests that fail2ban can *act*. It does not test that fail2ban is
+**reading** your auth log — for that, watch the jail's total failed count grow
+over a few days of real traffic, as in
+[step 27](#27-a-checklist-to-verify-your-setup).
 
 Reference: [fail2ban
 docs](https://github.com/fail2ban/fail2ban).
@@ -581,11 +590,15 @@ isn't really running is worse than none, because you'll *believe* you're
 patched. Do a dry run:
 
 ```bash
-sudo unattended-upgrade --dry-run --debug
+sudo unattended-upgrade --dry-run -v
 ```
 
-It prints which packages *would* be upgraded and which are held back, without
-changing anything. After real runs, the history lives in
+It prints which packages *would* be upgraded, without changing anything — look
+for the `Packages that will be upgraded:` line, and for `Allowed origins are:`
+just above it, which tells you which repositories it is willing to touch at all.
+(Many examples use `--debug` instead. That works, but it buries the same answer
+under ~170 lines of apt pinning detail; `-v` is the readable form, and `--debug`
+is for when `-v` says nothing and you need to know why.) After real runs, the history lives in
 `/var/log/unattended-upgrades/` — check it occasionally to confirm patches are
 landing. Reference: [unattended-upgrades docs](https://wiki.debian.org/UnattendedUpgrades).
 
@@ -647,7 +660,7 @@ Without one it connects to Cloudflare and then serves nothing. Write
 
 ```yaml
 tunnel: <tunnel-uuid-from-create>
-credentials-file: /root/.cloudflared/<tunnel-uuid>.json
+credentials-file: /home/<username>/.cloudflared/<tunnel-uuid>.json
 
 ingress:
   - hostname: app.example.com
@@ -658,6 +671,17 @@ ingress:
 Each `ingress` entry sends one public hostname to one local address. The final
 catch-all rule is **mandatory** — `cloudflared` refuses to start without it —
 and returning 404 for unmatched hostnames is the sane default.
+
+**Use the credentials path that `create` actually printed**, rather than the
+one in any tutorial (including this one). `cloudflared tunnel create` writes the
+credentials file *next to the origin certificate* that `cloudflared tunnel
+login` produced, and prints the path it chose (`Tunnel credentials written to
+...`). Run `login` as your normal user and that is
+`~/.cloudflared/<uuid>.json`; run it under `sudo` and it is
+`/root/.cloudflared/<uuid>.json`. Pasting the `/root/...` form when your file is
+really in your home directory gives you a tunnel that starts and then fails to
+authenticate. Whichever path you use must be readable by **root**, since the
+service installed below runs as root.
 
 Validate, test in the foreground, then install it as a boot service:
 
@@ -1634,6 +1658,15 @@ sudo nano /etc/logrotate.d/my-app
 - `copytruncate` copies the log then truncates the original in place — needed
   for a program that keeps a log file open continuously and won't reopen a
   freshly-renamed one on its own.
+
+**One exception to this guide's back-up-before-you-edit habit:** do not leave
+the backup copy *inside* `/etc/logrotate.d/`. logrotate reads every file in that
+directory except a fixed list of taboo suffixes (`.dpkg-old`, `.rpmsave`,
+`.ucf-new`, a trailing `~`, and a few more) — and `.bak` is **not** on that
+list. A `my-app.bak.20260101` sitting beside `my-app` is parsed as a second,
+live config, which then trips `duplicate log entry for <path>` and makes the
+whole run exit non-zero. Keep backups of these files somewhere outside the
+directory (or end the name with `~`).
 
 No new timer is usually needed — most systems already run `logrotate` daily via
 a system timer or cron entry; a new config just needs to exist under
