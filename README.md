@@ -532,10 +532,24 @@ sudo fail2ban-client status sshd | grep 'Banned IP list'   # should be empty aga
 
 Both `set` commands print `1` (the number of addresses affected); the two
 `status` checks are what actually prove the ban was applied and then removed.
-Note this only tests that fail2ban can *act*. It does not test that fail2ban is
-**reading** your auth log — for that, watch the jail's total failed count grow
-over a few days of real traffic, as in
-[step 27](#27-a-checklist-to-verify-your-setup).
+
+That only proves fail2ban can *act*. To prove it is **reading** the right
+source, ask it directly rather than waiting for real traffic to show up:
+
+```bash
+sudo fail2ban-client get sshd logpath
+sudo fail2ban-client status sshd | grep 'Journal matches'
+```
+
+On a jail using the systemd backend, the first prints
+`No file is currently monitored` — which looks alarming but is correct, since
+there is no file — and the second prints the journal filter it is actually
+applying, e.g. `Journal matches: _SYSTEMD_UNIT=sshd.service + _COMM=sshd`.
+On a file backend it is the other way round: `logpath` lists the file being
+tailed and the `grep` returns nothing. The genuine failure to look for is
+`logpath` naming a file that **does not exist** on your system — classically
+`/var/log/auth.log` on an image with no rsyslog installed. That jail starts
+cleanly, reports healthy, and reads nothing at all.
 
 Reference: [fail2ban
 docs](https://github.com/fail2ban/fail2ban).
@@ -2310,9 +2324,17 @@ sudo fail2ban-client status sshd
 ```
 
 Expect `passwordauthentication no` and `permitrootlogin no` (step 6), a default
-deny policy (step 7), and a jail that shows a non-zero *total* failed count —
-zero totals after weeks of uptime usually means fail2ban is reading the wrong
-log source, not that nobody tried (step 8).
+deny policy (step 7), and a jail that reports `Status for the jail: sshd`
+rather than an error.
+
+Resist reading the *counters* as a health check. A `Total failed: 0` is often
+taken as proof that fail2ban is watching the wrong log, but on a Pi that is
+LAN-only — or whose SSH port is firewalled to a subnet or a VPN range (step 7)
+— zero is simply the truth: the bots never reach sshd to fail against it. The
+counter only becomes evidence once the port is genuinely reachable from the
+internet. To check the log source itself, use the direct `get sshd logpath`
+test in step 8 instead; it answers in one command and doesn't depend on being
+attacked.
 
 **Patching**
 
@@ -2348,7 +2370,7 @@ pass you were trying to catch.
 **Health**
 
 ```bash
-vcgencmd get_throttled            # 0x0 = never throttled since boot
+vcgencmd get_throttled            # throttled=0x0 = clean; anything else, decode it (step 29)
 systemctl --failed                # should list zero units
 docker ps --format '{{.Names}}\t{{.Status}}'
 free -h                           # read the "available" column, not "free"
@@ -2429,15 +2451,36 @@ keeps dying without an obvious log reason, check for an OOM kill (step 18).
   temperature and for under-voltage warnings:
   ```bash
   vcgencmd measure_temp
-  vcgencmd get_throttled   # 0x0 means no throttling has occurred
+  vcgencmd get_throttled   # prints e.g. throttled=0x0
   ```
+  `throttled=0x0` is the all-clear. Anything else is a **bit field**, and the
+  half that matters is which half of it is set — the low bits describe what is
+  happening *right now*, the high bits are sticky flags that latch on the first
+  occurrence and stay set until reboot:
+
+  | Bit | Meaning now | Sticky bit | Meaning since boot |
+  |---|---|---|---|
+  | 0 (`0x1`) | Under-voltage | 16 (`0x10000`) | Under-voltage has occurred |
+  | 1 (`0x2`) | ARM frequency capped | 17 (`0x20000`) | Frequency capping has occurred |
+  | 2 (`0x4`) | Currently throttled | 18 (`0x40000`) | Throttling has occurred |
+  | 3 (`0x8`) | Soft temperature limit active | 19 (`0x80000`) | Soft limit has been hit |
+
+  So `throttled=0x50000` means "under-voltage and throttling happened at some
+  point since boot, and neither is happening now" — worth investigating, not an
+  emergency. A value with any of the low four bits set means it is happening as
+  you read it. Under-voltage bits point at the power supply or cable; the
+  temperature bits point at cooling. Reference:
+  [`vcgencmd` documentation](https://www.raspberrypi.com/documentation/computers/os.html#get_throttled).
 - **A backup/rsync job errors out partway through on an external drive** —
   suspect the filesystem before the script. See [Choosing a filesystem for
   attached storage](#17-choosing-a-filesystem-for-attached-storage): exFAT in
   particular rejects ownership, permission, and symlink/hardlink operations
   outright.
-- **fail2ban is running but never bans anyone** — it may be watching the wrong
-  log source; see the journal-backend note in [step 8](#8-block-brute-force-attacks-fail2ban).
+- **fail2ban is running but never bans anyone** — first rule out the boring
+  explanation: if SSH is only reachable from your LAN or a VPN, there is
+  nothing to ban. If the port really is public, confirm the jail is reading a
+  log source that exists, using `fail2ban-client get sshd logpath` as described
+  in [step 8](#8-block-brute-force-attacks-fail2ban).
 
 ## 30. Further reading
 
