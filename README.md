@@ -886,11 +886,10 @@ services:
 
 - `depends_on` makes Docker start the database before the app.
 - The `ports:` line binds to the Pi's LAN address for the same reason as the
-  Uptime Kuma example above: a bare `"8080:80"` publishes on **every**
-  interface and [Docker's iptables rules sit ahead of ufw's](#7-set-up-a-firewall-ufw),
-  so the firewall would not stop it. If you later put Nextcloud behind a
-  [tunnel](#11-reaching-your-pi-from-outside-home), the tunnel reaches it from
-  the Pi itself — you do not need it published more widely to do that.
+  Uptime Kuma example above — a bare `"8080:80"` would bypass ufw. If you later
+  put Nextcloud behind a [tunnel](#11-reaching-your-pi-from-outside-home), the
+  tunnel reaches it from the Pi itself, so it still does not need publishing
+  any wider.
 - `./db` and `./html` keep the database and Nextcloud's own app files next to
   the compose file; `/mnt/storage/nextcloud` (the path you planned in step 1)
   is where actual user files live — mapped in separately so you can put it on
@@ -1133,6 +1132,17 @@ that aren't obvious the first time:
   systemctl --user enable --now qbittorrent
   ```
   `daemon-reload` is what makes systemd notice a unit file you just created.
+  **Change the web UI password before anything else.** qBittorrent up to and
+  including 4.5.x ships a *hardcoded* default login (`admin` / `adminadmin`) —
+  it is in the published source, so it is not a secret from anyone. Newer
+  releases (4.6.0+) dropped it in favour of printing a random one-off password
+  to the log on first start, which you then have to read and replace:
+  ```bash
+  journalctl --user -u qbittorrent | grep -i "temporary password"
+  ```
+  Either way, set your own under **Tools → Options → Web UI** on first login.
+  Combined with the LAN-only rule below, that is the difference between a
+  download client and an open remote-code-execution endpoint.
   Pick a web-UI port nothing else is already using: `8080` is a very common
   default and collides with the Nextcloud example in
   [step 12](#12-running-services-with-docker), so check first with
@@ -1485,6 +1495,7 @@ A home server is only as safe as its backups. Build these habits early:
   holds is only as safe as your last copy stored *somewhere else*. A simple
   approach is `rsync` to another machine or external drive:
   ```bash
+  mountpoint -q /mnt/backup || { echo "backup drive not mounted - aborting"; exit 1; }
   rsync -av --delete ~/apps/ /mnt/backup/apps/
   ```
   `-a` preserves permissions/timestamps, `-v` is verbose, `--delete` mirrors
@@ -1492,6 +1503,14 @@ A home server is only as safe as its backups. Build these habits early:
   destination drive is exFAT, see the caveats in [Choosing a filesystem for
   attached storage](#17-choosing-a-filesystem-for-attached-storage) before you
   reach for `-a`.
+
+  The `mountpoint` guard on the first line is not optional padding. If the
+  external drive fails to mount, `/mnt/backup` still exists as an empty
+  directory *on the boot card* — so `rsync` writes the whole backup onto the
+  microSD it was supposed to protect, fills it, and exits 0. `mountpoint -q`
+  returns non-zero for a plain directory, so the job stops instead. Put the
+  same guard in front of every scheduled job that writes to attached storage
+  (see [step 27](#27-a-checklist-to-verify-your-setup)).
 - **Never copy a live database file — dump it instead.** Grabbing the files
   under a running database's data directory with `cp` or `rsync` can capture a
   half-written, corrupt snapshot that won't restore. Use the database's own dump
@@ -1532,9 +1551,17 @@ A home server is only as safe as its backups. Build these habits early:
 - **Watch for storage wear** if running from microSD. Check for disk errors and
   keep an eye on space:
   ```bash
-  dmesg | grep -i error
+  sudo dmesg -T --level=err,warn | tail -30
   df -h
   ```
+  `-T` prints real dates instead of seconds-since-boot (otherwise you cannot
+  tell a fault from this morning from one from six months ago), and
+  `--level=err,warn` selects by the kernel's own severity field rather than
+  grepping for the word "error" — which misses the I/O and `mmc0:` messages a
+  failing card actually emits. Note this is the kernel ring buffer, so it only
+  covers the current boot; for longer history use `journalctl -k -p warning
+  --since "1 week ago"` (needs a persistent journal — see
+  [step 22](#22-log-management)).
   Don't be surprised if an SD card needs replacing after a year or two of heavy
   24/7 writes — this is why an SSD is worth it for busy setups.
 - **Keep a running TODO list** of unfinished items. A home server is rarely
