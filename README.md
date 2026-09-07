@@ -1684,11 +1684,21 @@ directory (or end the name with `~`).
 
 No new timer is usually needed — most systems already run `logrotate` daily via
 a system timer or cron entry; a new config just needs to exist under
-`/etc/logrotate.d/` to be picked up on the next run. Test it without waiting:
+`/etc/logrotate.d/` to be picked up on the next run. To check your rule without
+waiting for that run, do it in two steps:
 
 ```bash
-sudo logrotate -f /etc/logrotate.d/my-app
+sudo logrotate -d /etc/logrotate.d/my-app    # dry run: says what it WOULD do
+sudo logrotate -f /etc/logrotate.d/my-app    # force: actually rotates, now
 ```
+
+`-d` is the safe one to reach for first — it parses the config, reports errors,
+and changes nothing on disk. `-f` is **not** a test: it performs a real
+rotation immediately, ignoring your `size`/`daily` conditions, and burns one of
+your `rotate N` slots. That is fine for a fresh rule, but running it against a
+system config out of curiosity will genuinely rotate live logs. Note also that
+`-d` implies debug output and skips the state file, so it does not tell you
+whether the *schedule* would have fired — only whether the rule is valid.
 
 **Don't forget the systemd journal — it's separate from `logrotate`.** Most
 service logs (anything shown by `journalctl`) are managed by `systemd-journald`,
@@ -2312,8 +2322,15 @@ addresses) with the same suspicion, and confirm your firewall actually has IPv6
 rules rather than only IPv4 ones (step 7):
 
 ```bash
-sudo grep -c '^-A ufw6-user-input' /etc/ufw/user6.rules   # 0 = no IPv6 rules at all
+sudo grep -c '^-A ufw6-user-input' /etc/ufw/user6.rules   # IPv6 allow rules
+sudo grep -c '^-A ufw-user-input'  /etc/ufw/user.rules    # IPv4 allow rules
 ```
+
+Compare the two numbers. A large IPv4 count next to a `0` for IPv6 is the
+normal-looking-but-wrong state: `IPV6=yes` in `/etc/default/ufw` makes ufw
+*filter* IPv6, but every `ufw allow from 192.168.1.0/24 ...` rule you wrote is
+IPv4-only, so none of them has an IPv6 twin. Whether that is a problem depends
+on which side of default-deny you land on — see step 7.
 
 **Security**
 
@@ -2326,6 +2343,26 @@ sudo fail2ban-client status sshd
 Expect `passwordauthentication no` and `permitrootlogin no` (step 6), a default
 deny policy (step 7), and a jail that reports `Status for the jail: sshd`
 rather than an error.
+
+Two ways this particular check can reassure you wrongly:
+
+- **A bare `sshd -T` does not evaluate `Match` blocks.** It prints the global
+  defaults only, so a config that says `PasswordAuthentication no` at the top
+  and re-enables it inside a `Match Address 192.168.1.0/24` block still reports
+  a clean `passwordauthentication no`. To see what a *specific* client actually
+  gets, supply the connection context with `-C`:
+  ```bash
+  sudo sshd -T -C user=<username>,host=example,addr=<client-ip> | grep -i passwordauth
+  ```
+  Run it once with an address inside any `Match` you have and once with an
+  outside address; if the two answers differ, that difference is your real
+  policy. (Verified on Debian 12: the same file reports `no` bare and `yes`
+  with a matching `-C addr=`.)
+- **`permitrootlogin without-password` is not `no`.** That is how `sshd -T`
+  renders `prohibit-password`, the Raspberry Pi OS default — it means root may
+  still log in *with a key*, just not a password. It is a reasonable setting,
+  but if you intended to bar root entirely, this output is not the confirmation
+  it looks like; set `PermitRootLogin no` and re-check.
 
 Resist reading the *counters* as a health check. A `Total failed: 0` is often
 taken as proof that fail2ban is watching the wrong log, but on a Pi that is
