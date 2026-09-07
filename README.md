@@ -379,6 +379,33 @@ Docker's own `DOCKER-USER` iptables chain rather than in ufw. The loopback/LAN
 bind is the simpler habit and is usually what you want for an admin tool.
 Reference: [ufw docs](https://help.ubuntu.com/community/UFW).
 
+**And the mirror image — containers are not on your LAN.** When a container
+reaches a service *outside* itself (on the host, or on another machine), the
+connection arrives from that container's **Docker bridge subnet** — e.g.
+`172.19.0.0/16` — never from the host's LAN address. A rule scoped only to your
+LAN will therefore silently drop it. This bites hardest with a containerized
+monitor (see [step 14](#14-uptime-monitoring-and-alerts)) checking a
+bare-metal service: the check fails forever, the dashboard shows a confident
+false DOWN, and the app logs show nothing at all, because the packet died in
+the firewall before it arrived. Find the subnet and add a matching rule
+alongside the LAN one:
+
+```bash
+docker network ls
+docker network inspect <network> --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
+sudo ufw allow from 172.19.0.0/16 to any port 8081 comment 'app-from-monitor'
+```
+
+To confirm the firewall is what's dropping something, read the kernel's own
+rejection log — ufw logs there, and `/var/log/ufw.log` only exists on distros
+whose rsyslog config creates it (Raspberry Pi OS often has no such file):
+
+```bash
+sudo journalctl -k | grep 'UFW BLOCK' | tail
+```
+
+The `SRC=` field in a blocked line tells you exactly which address to allow.
+
 ## 8. Block brute-force attacks (fail2ban)
 
 Even with key-only SSH, bots will hammer your Pi with login attempts. `fail2ban`
@@ -600,6 +627,38 @@ the DNS route first (`cloudflared tunnel route dns` created it), then take the
 service down — in that order. Removing the container first leaves a published
 hostname pointing at a dead service, which tells a scanner the name is real and
 worth revisiting.
+
+**Publishing only a slice of an app.** Sometimes you want one narrow path
+public — a status page at `/status/mypage`, say — while the same app's
+dashboard, login and API stay private. You don't need a reverse proxy for this:
+an ingress rule can match on `path:` (a Go regular expression) as well as
+hostname. Put the narrow rule *above* a hostname-specific 404, so anything that
+doesn't match falls through and is refused:
+
+```yaml
+ingress:
+  - hostname: status.example.com
+    path: ^/(status/|assets/|api/status-page/)
+    service: http://localhost:3001
+  - hostname: status.example.com
+    service: http_status:404      # everything else on this hostname
+  - service: http_status:404      # global catch-all; must be last
+```
+
+Rules are evaluated **top to bottom, first match wins**, so ordering is the
+whole mechanism. Note that a status page usually needs its static assets and a
+data endpoint too, not just the page URL — check your app's network requests and
+widen the regex until the page renders, no further. Test the logic before
+restarting anything; `cloudflared` will tell you which rule a URL hits:
+
+```bash
+cloudflared tunnel ingress validate
+cloudflared tunnel ingress rule https://status.example.com/status/mypage   # should hit the app
+cloudflared tunnel ingress rule https://status.example.com/dashboard       # should hit the 404
+```
+
+Confirm from a machine *off your network* (or with `curl -I`) that the private
+paths really return 404 before you consider it done.
 
 ### Option D: Remote desktop (VNC) for GUI access
 
@@ -933,7 +992,11 @@ on an interval and can notify you the moment one fails a check.
 After it's running, add a **Monitor** per service (HTTP(s), TCP port, ping,
 etc.) pointing at its LAN address — monitor from inside the network, not
 through your public tunnel, so a tunnel hiccup doesn't look like the service
-itself is down. Then configure a **Notification** channel under Settings →
+itself is down. If a monitor stays stubbornly DOWN while the service is
+plainly fine from your laptop, suspect the firewall before the app — a
+containerized monitor reaches LAN services from its Docker bridge subnet, not
+the host's LAN address (see [step 7](#7-set-up-a-firewall-ufw)). Then configure
+a **Notification** channel under Settings →
 Notifications so a failure actually reaches you instead of sitting unread in a
 dashboard: Telegram, Discord, email, and dozens of others are built in.
 
@@ -949,19 +1012,29 @@ A few practical choices worth making deliberately:
 **The blind spot: who watches the watcher?** Monitoring self-hosted *on the Pi
 it's monitoring* cannot tell you when the whole Pi is down — if the box loses
 power, drops off the network, or its disk fills, the monitor goes down with
-everything else and sends nothing. To catch a total-host failure you need a
-heartbeat checked from **outside** the Pi:
+everything else and sends nothing. Catching that needs a check that runs
+somewhere else entirely — so think of monitoring as **two layers**, and expect
+to run both:
 
-- Have the Pi periodically "check in" to an external service — either a free
-  external monitor (e.g. [UptimeRobot](https://uptimerobot.com/) hitting your
-  public URL, if you expose one) or a **push/heartbeat** service like
-  [Healthchecks.io](https://healthchecks.io/) that alerts you when an expected
-  ping *fails to arrive*. Uptime Kuma itself supports a "Push" monitor type for
-  the inverse pattern (a script on another machine pings Kuma).
-- The key inversion: a normal monitor alerts on a *bad response*; a heartbeat
-  alerts on **silence**. Silence is exactly what you get when the Pi is dead, so
-  a heartbeat is the only kind of check that survives the failure it's meant to
-  report.
+| Layer | Runs | Sees | Blind to |
+|---|---|---|---|
+| Internal (e.g. Uptime Kuma) | On the Pi | Individual services failing; per-service detail; LAN-only endpoints | The Pi itself dying |
+| External (hosted or push) | Off the Pi | Total host failure — power cut, network drop, crash | Anything not reachable from outside |
+
+For the external layer, either:
+
+- A **free hosted monitor** polling a URL you already expose publicly (e.g.
+  [HetrixTools](https://hetrixtools.com/), [UptimeRobot](https://uptimerobot.com/)).
+  Check which alert channels the free tier actually includes before committing —
+  they differ, and a monitor that can only email you is a monitor you'll miss.
+- A **push/heartbeat** service like [Healthchecks.io](https://healthchecks.io/),
+  where a cron job on the Pi pings a URL on a schedule and the service alerts you
+  when a ping *fails to arrive*. This is the better option if you expose nothing
+  publicly. Uptime Kuma supports the same "Push" monitor type.
+
+The key inversion: a normal monitor alerts on a *bad response*; a heartbeat
+alerts on **silence**. Silence is exactly what a dead Pi produces, so a
+heartbeat is the only check that survives the failure it exists to report.
 
 ## 15. Download clients and media libraries
 
