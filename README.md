@@ -535,12 +535,43 @@ Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-net
 `cloudflared` (see their docs for the current package for 64-bit ARM):
 
 ```bash
-cloudflared tunnel login
-cloudflared tunnel create home
-cloudflared tunnel route dns home app.example.com
-cloudflared tunnel run home
-sudo cloudflared service install   # run it automatically on boot
+cloudflared tunnel login                              # browser auth; writes cert.pem
+cloudflared tunnel create home                        # prints a tunnel UUID + credentials file
+cloudflared tunnel route dns home app.example.com     # points the hostname at the tunnel
 ```
+
+Creating the tunnel is not enough on its own: `cloudflared` also needs an
+**ingress config** telling it which hostname maps to which local service.
+Without one it connects to Cloudflare and then serves nothing. Write
+`/etc/cloudflared/config.yml`:
+
+```yaml
+tunnel: <tunnel-uuid-from-create>
+credentials-file: /root/.cloudflared/<tunnel-uuid>.json
+
+ingress:
+  - hostname: app.example.com
+    service: http://localhost:8080
+  - service: http_status:404      # required catch-all; must be the last rule
+```
+
+Each `ingress` entry sends one public hostname to one local address. The final
+catch-all rule is **mandatory** — `cloudflared` refuses to start without it —
+and returning 404 for unmatched hostnames is the sane default.
+
+Validate, test in the foreground, then install it as a boot service:
+
+```bash
+cloudflared tunnel ingress validate      # checks the rules parse and the catch-all exists
+cloudflared tunnel run home              # foreground; Ctrl+C once you have confirmed it works
+sudo cloudflared service install         # reads the config above; starts on boot
+sudo systemctl status cloudflared
+```
+
+`service install` picks up the credentials from the config file you just wrote,
+so write the config *before* running it. Adding a hostname later means editing
+`ingress:`, running `cloudflared tunnel route dns` for the new name, and
+`sudo systemctl restart cloudflared`.
 
 > **Important — a tunnel is still exposure.** Because you didn't open a port, a
 > tunnel *feels* private, but the moment you publish a hostname it is just as
@@ -1012,6 +1043,7 @@ services:
   people outside your household streaming from it.
 
 ## 16. Running a local AI model with Ollama
+
 Not everything you run on a home server needs a cloud API. [Ollama](https://ollama.com/)
 lets the Pi itself serve small open-weight language models over a local HTTP API —
 useful for offline text tasks, experimenting without per-token cost, or feeding
@@ -1261,16 +1293,12 @@ vacuum. The pattern is the same regardless of the specific device:
    credentials problem.
 
 **A related pattern if you run an AI agent for home automation:** don't assume
-a bundled/default capability does everything its name implies. A common trap
-is a web-search backend that can find pages but silently cannot fetch and
-extract their actual content — the failure often looks like a generic error
-on every attempt rather than an obvious "not supported" message, so it's easy
-to miss until you actually check the logs. If that happens, the fix is the
-same third-party-API pattern as above: pick a purpose-built content-extraction
-API (several exist specifically for this — turning a raw page into clean
-text/markdown for an LLM to read), get a key, and point the relevant config
-at it. Confirm the fix by checking that the previously-failing calls succeed,
-not just that the config changed.
+a bundled capability does everything its name implies. A search backend that
+finds pages but cannot fetch their contents typically fails with a generic
+error rather than "not supported", so it goes unnoticed until you read the
+logs. The fix is the same third-party-API pattern as above — swap in a
+purpose-built API and then confirm the previously-failing calls actually
+succeed, rather than assuming a config change was the fix.
 
 Run the poller as its own [scheduled job](#22-task-automation-and-scheduled-jobs),
 keep its credentials in a permissions-locked env file (not committed to git —
