@@ -1975,6 +1975,95 @@ sequence for a fiddly migration. Each is cheap and pays off every later time
 that task recurs. Crucially, when the agent gets something wrong and you correct
 it, **fold the correction back into the skill** so it isn't relearned next time.
 
+### Back up the agent's state directory, not just your data
+
+Everything in the previous section — the constitution, the memory file, the job
+definitions, the skills you wrote after each correction — lives in the agent's
+own home directory, typically `~/.hermes/`:
+
+```
+~/.hermes/
+  config.yaml      # providers, models, gateways, tool permissions
+  .env             # API keys and tokens (chmod 600)
+  memories/        # what it knows about your box
+  skills/          # procedures you taught it
+  cron/            # scheduled job definitions
+  logs/
+```
+
+It is worth being blunt about why this matters: **reinstalling the software does
+not get any of this back.** The install command takes minutes; the contents of
+that directory are months of accumulated corrections, decisions you already made
+once and don't want to relitigate, and procedures you worked out the hard way.
+Lose it and you are not doing a fresh install, you are starting the tuning over
+from zero — and you won't remember most of what was in there, because the whole
+point of writing it down was to stop carrying it in your head.
+
+So fold it into the routine you already have from
+[step 20](#20-backups-and-maintenance), alongside your app data:
+
+```bash
+mountpoint -q /mnt/backup || { echo "backup drive not mounted - aborting"; exit 1; }
+rsync -av --delete --exclude '.env' --exclude 'logs/' \
+  ~/.hermes/ /mnt/backup/hermes-state/
+```
+
+Two decisions to make deliberately:
+
+- **Secrets.** The `--exclude '.env'` above assumes the backup destination is
+  less trusted than the Pi — a shared NAS, a drive that travels, a cloud target.
+  That's the safer default, but it means a restore needs you to re-add API keys
+  by hand, so write that down somewhere. If you do include secrets, the
+  destination has to be treated as being as sensitive as the Pi itself.
+- **The rest of the directory is not innocuous either.** The memory file is a
+  written description of your machine: what's installed, which ports are open,
+  where the config lives, which decisions were made and why. That is genuinely
+  useful to you and genuinely useful to anyone else who gets a copy. Back it up
+  somewhere you'd be comfortable storing your config repo
+  ([step 21](#21-versioning-your-configuration-with-git)) — the same standard,
+  for the same reason.
+
+The memory file and skills are plain markdown, so the neatest arrangement is to
+version them in that private config repo and let the backup job cover the rest.
+You get diffs on the parts that change meaningfully and a flat copy of
+everything else.
+
+### Delegating work to subagents
+
+Some agents can spawn a **subagent**: a separate task with its own context that
+does a chunk of work and reports back a summary, rather than doing it inline in
+your conversation. It's a real capability, and it's also one people reach for
+too early, so it's worth naming when it actually pays.
+
+It's worth it when:
+
+- **The work is genuinely parallel.** Three independent questions — "what
+  changed in the container set", "is the backup drive healthy", "any new devices
+  on the LAN" — have no dependency on each other. Running them as separate tasks
+  finishes in roughly the time of the slowest one instead of the sum.
+- **The intermediate output is enormous and disposable.** Grepping a week of
+  journald to answer one question produces thousands of lines you never want to
+  read. A subagent can wade through it in its own context and hand back the
+  three-line answer, leaving your main session uncluttered — which matters
+  because a context stuffed with log noise makes the agent measurably worse at
+  the thing you actually asked.
+- **You want a genuinely independent second look.** A review task that hasn't
+  seen the reasoning that produced the work is more likely to catch a bad
+  assumption than the same session grading its own homework.
+
+It's overkill when the task is one tool call. Spawning a task to run `df -h` is
+strictly slower and more expensive than running `df -h`, and it adds a layer
+where information gets summarized — which is exactly where detail goes missing.
+The failure mode is worth knowing: **a subagent only reports back what it
+decided was relevant.** If you need the exact command output, ask for the output,
+not a summary of it. That is the same "show me what you based that on" rule from
+the top of this section, and it applies harder across a delegation boundary.
+
+A practical middle ground on a Pi: keep delegation for the two cases above —
+parallel independent work, and noisy searches — and do everything else inline.
+The complexity is only worth carrying where it buys you wall-clock time or a
+clean context.
+
 ### Voice messages: transcription that runs on the Pi
 
 If you drive the agent from a messaging app, **voice notes are the feature that
@@ -2053,9 +2142,93 @@ not anything interesting happened. Worth doing deliberately:
   agents accept an OpenAI-compatible endpoint, so `http://localhost:11434/v1`
   usually just works, including as an automatic **fallback** when the primary
   provider is unavailable.
-- **Pin the model per job.** If your agent lets you set a model per scheduled
-  job, do it — otherwise changing your global default silently changes the
-  behavior of every job at once.
+- **Pin the model per job**, rather than letting jobs inherit whatever your
+  global default happens to be — see the next subsection.
+
+### Pin the provider and model on every scheduled job
+
+This one deserves its own heading because it is easy to get wrong, and the
+failure is silent.
+
+If your agent's scheduler lets a job run under the **global default model**, then
+that job's behavior is defined by a setting that lives somewhere else and that
+you will eventually change for an unrelated reason — you switched providers to
+cut cost, a new model shipped and you tried it, your key for the old one lapsed.
+Nothing errors. The job still runs on schedule. It just starts producing
+different output: a digest that used to be four tight lines is now twelve, a
+summariser that reliably found the one real change now buries it, or a job tuned
+against a model with web access quietly loses it.
+
+The fix is to write the provider and model into the job definition itself,
+always, even when it matches the current default:
+
+```yaml
+# a scheduled job, with the model pinned explicitly
+name: weekly-state-audit
+schedule: "0 8 * * 1"
+provider: anthropic
+model: claude-sonnet-4
+prompt: |
+  Diff this week's system snapshot against last week's and report only
+  real changes.
+```
+
+Two things follow from this:
+
+- **Pinning makes the cost/quality choice visible per job.** A nightly log
+  summariser and a weekly audit that has to reason about diffs genuinely want
+  different models, and that decision belongs next to the job, not in a global.
+  It also pairs with pointing trivial jobs at a
+  [local model](#16-running-a-local-ai-model-with-ollama).
+- **Changing the global default becomes safe again.** You can experiment with
+  your interactive default without touching anything that runs unattended,
+  which is the whole reason to bother.
+
+Treat it as a rule rather than a judgment call: pin every job at creation time.
+This is the kind of thing you get bitten by exactly once — you spend an evening
+debugging a job whose output changed, find nothing wrong with the job, and
+eventually realise you changed a setting two weeks earlier in a different file.
+After that you never leave one unpinned again.
+
+### More than one messaging channel is more than one exposure decision
+
+Once the agent is reachable from your phone, it's tempting to make it reachable
+from *everywhere* — Telegram and WhatsApp and Discord and email — because each
+one is a small config block and each one is genuinely convenient in a different
+place. Most agents support several gateways at once, and the setup is easy:
+
+```bash
+hermes gateway   # configure a messaging platform
+```
+
+The ease is the trap. Every inbound channel you add is **a fresh exposure
+decision in exactly the sense of [step 11](#11-reaching-your-pi-from-outside-home)**,
+and a higher-stakes one than publishing a normal service, because what's behind
+this door has a shell on your server. Specifically, each additional gateway is:
+
+- **Another place a message can arrive from.** Access control lives in the
+  gateway's own config — an allowlist of user or chat IDs. If a platform's
+  identifier is easier to guess or spoof than the others, your agent is now only
+  as protected as the weakest one you've enabled.
+- **Another long-lived credential to protect.** A bot token is a bearer token:
+  whoever holds it can send messages as that bot, and on some platforms read the
+  history too. It belongs in `~/.hermes/.env` at `chmod 600`, out of git
+  ([step 21](#21-versioning-your-configuration-with-git)), and — as above — out
+  of a backup destination you don't fully trust.
+- **Another thing that can be misconfigured.** Webhook-based gateways need a
+  publicly reachable URL, which quietly turns "an agent on my LAN" into "an
+  endpoint on the internet." If you go that route, terminate it behind the
+  tunnel and auth gate from [step 11](#11-reaching-your-pi-from-outside-home)
+  rather than opening a port, and verify the gateway itself rejects unknown
+  senders rather than assuming an obscure URL is protection.
+
+The practical advice is not "don't" — a second channel is legitimately useful,
+especially if one platform is where family already messages you. It's **add them
+one at a time, and for each one confirm the allowlist works by messaging the bot
+from an account that shouldn't have access.** An allowlist you haven't tested
+from the outside is an assumption, not a control. And prefer the channel you
+already use for alerts ([step 14](#14-uptime-monitoring-and-alerts)) as the
+primary one, so the approval path and the alert path stay the same place.
 
 ### Setting it up sanely
 
@@ -2068,6 +2241,9 @@ not anything interesting happened. Worth doing deliberately:
   ([step 21](#21-versioning-your-configuration-with-git)).
 - **Rotate its logs.** `~/.hermes/logs/` is exactly the custom path
   [step 22](#22-log-management) is about.
+- **Back up its state directory** with everything else
+  ([step 20](#20-backups-and-maintenance)) — the tuning in there is the part you
+  can't reinstall.
 - **Don't let it be your only way in.** If the agent is how you administer the
   box, a broken agent is a lockout. Keep SSH working independently
   ([step 6](#6-secure-your-ssh-access)) and a
