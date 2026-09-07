@@ -35,11 +35,11 @@ not all equally essential. If you're starting from nothing:
 | **1–8** | The core build: hardware, OS, login, stable address, SSH keys, firewall, fail2ban | **No.** This is the minimum for a Pi that's safe to leave running. Budget an unhurried evening. |
 | **9–11** | Network awareness and remote access | Read **11** before exposing anything. 9 and 10 can wait a week. |
 | **12** | Docker — the foundation for everything you'll actually run | **No**, if you plan to host any app at all. |
-| **13–18** | Optional services and tuning: file shares, monitoring, media, local AI, storage, memory limits | Pick only what you want. These are independent of each other. |
-| **19–24** | Keeping it alive: backups, config versioning, logs, automation | **19 is not optional.** Do it the same week you put real data on the Pi. |
-| **25–28** | Checklist, lessons, troubleshooting, further reading | Reference material — come back when something breaks. |
+| **13–19** | Optional services and tuning: file shares, monitoring, media, local AI, storage, memory limits, reverse proxy | Pick only what you want. These are independent of each other. |
+| **20–25** | Keeping it alive: backups, config versioning, logs, automation | **20 is not optional.** Do it the same week you put real data on the Pi. |
+| **26–29** | Checklist, lessons, troubleshooting, further reading | Reference material — come back when something breaks. |
 
-Two habits worth adopting from section 1, not section 19:
+Two habits worth adopting from section 1, not section 20:
 
 - **Before editing any config file, copy it first.** Every rollback in this
   guide depends on that copy existing.
@@ -68,16 +68,17 @@ Two habits worth adopting from section 1, not section 19:
 16. [Running a local AI model with Ollama](#16-running-a-local-ai-model-with-ollama)
 17. [Choosing a filesystem for attached storage](#17-choosing-a-filesystem-for-attached-storage)
 18. [Memory, swap, and container resource limits](#18-memory-swap-and-container-resource-limits)
-19. [Backups and maintenance](#19-backups-and-maintenance)
-20. [Versioning your configuration with git](#20-versioning-your-configuration-with-git)
-21. [Log management](#21-log-management)
-22. [Integrating third-party device and cloud APIs](#22-integrating-third-party-device-and-cloud-apis)
-23. [Task automation and scheduled jobs](#23-task-automation-and-scheduled-jobs)
-24. [A tiered approval model for automation](#24-a-tiered-approval-model-for-automation)
-25. [A checklist to verify your setup](#25-a-checklist-to-verify-your-setup)
-26. [Lessons learned](#26-lessons-learned)
-27. [Troubleshooting](#27-troubleshooting)
-28. [Further reading](#28-further-reading)
+19. [Putting several services behind one reverse proxy](#19-putting-several-services-behind-one-reverse-proxy)
+20. [Backups and maintenance](#20-backups-and-maintenance)
+21. [Versioning your configuration with git](#21-versioning-your-configuration-with-git)
+22. [Log management](#22-log-management)
+23. [Integrating third-party device and cloud APIs](#23-integrating-third-party-device-and-cloud-apis)
+24. [Task automation and scheduled jobs](#24-task-automation-and-scheduled-jobs)
+25. [A tiered approval model for automation](#25-a-tiered-approval-model-for-automation)
+26. [A checklist to verify your setup](#26-a-checklist-to-verify-your-setup)
+27. [Lessons learned](#27-lessons-learned)
+28. [Troubleshooting](#28-troubleshooting)
+29. [Further reading](#29-further-reading)
 
 ---
 
@@ -89,7 +90,7 @@ A shopping/checklist before you start:
 |---|---|
 | A Raspberry Pi | Any model works; a **Pi 4 or Pi 5 with 4GB+ RAM** is comfortable for several Docker containers. This guide was built on a Pi 5 (8GB). |
 | Power supply | Use the **official supply for your model** (a Pi 5 wants 5V/5A USB-C). Underpowered supplies cause random crashes and SD-card corruption. |
-| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#26-lessons-learned). |
+| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#27-lessons-learned). |
 | A second computer | To flash the OS and to SSH in from. Windows, macOS, or Linux all work. |
 | Ethernet cable (recommended) | Wired is more reliable than Wi-Fi for a server that must stay reachable. |
 | Your home router's login | You'll need it later to reserve an IP address for the Pi. |
@@ -118,7 +119,7 @@ first. It's the one prerequisite skill.
 3. **Connect ethernet** from the Pi to your router, if you can. Wi-Fi works too
    and is configured during flashing.
 4. **Decide where the Pi will physically live.** For rare recovery situations
-   (see [tier 4](#24-a-tiered-approval-model-for-automation)), you'll occasionally
+   (see [tier 4](#25-a-tiered-approval-model-for-automation)), you'll occasionally
    need physical access — so somewhere reachable, not a five-hour round trip.
 
 Do **not** plug in the power supply yet. First boot happens after flashing.
@@ -135,7 +136,7 @@ default:
   output and a Pi that's already running hot has less thermal margin to spare.
 - Check for throttling regularly, not just once after applying the change —
   the two `vcgencmd` commands for this are in
-  [Troubleshooting](#27-troubleshooting).
+  [Troubleshooting](#28-troubleshooting).
 - If you inherit or revisit a Pi and don't remember setting an overclock,
   check `/boot/firmware/config.txt` for `arm_freq`/`over_voltage` lines before
   assuming odd instability is a software problem — it's an easy thing to set
@@ -446,7 +447,7 @@ sudo apt install arp-scan -y
 sudo arp-scan --localnet
 ```
 
-Run this on a schedule (see [Task automation](#23-task-automation-and-scheduled-jobs))
+Run this on a schedule (see [Task automation](#24-task-automation-and-scheduled-jobs))
 and keep a simple text or JSON file of MAC addresses you've already seen — a
 device isn't "new" twice. Route the alert to wherever you actually check
 notifications (see [Uptime monitoring and alerts](#14-uptime-monitoring-and-alerts))
@@ -694,7 +695,7 @@ Common starting points, by need:
 | Media server | Jellyfin, Plex |
 | Download client | qBittorrent, Transmission |
 | Uptime/monitoring | Uptime Kuma, Grafana + Prometheus |
-| Reverse proxy | Caddy, Nginx Proxy Manager, Traefik |
+| Reverse proxy | Caddy, Nginx Proxy Manager, Traefik (see [step 19](#19-putting-several-services-behind-one-reverse-proxy)) |
 | Container management UI | Portainer |
 
 [Portainer](https://docs.portainer.io/) gives you a web UI over Docker if you'd
@@ -714,7 +715,7 @@ gotchas that trip people up on a first install.
 you're running from a microSD card, put Nextcloud's data directory on an
 attached SSD/USB drive instead of the card — both for space and because heavy
 file writes wear microSD cards out (see [Lessons
-learned](#26-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
+learned](#27-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
 
 **2. Write the Compose file.** Nextcloud needs two containers: the app itself
 and a database (MariaDB here — Nextcloud's own docs recommend it over SQLite
@@ -771,7 +772,7 @@ services:
 - The two `MYSQL_PASSWORD` values and the matching one in `db.environment`
   **must be identical** — a common first-run failure is a typo between them.
 - Those passwords are sitting in plain text in this file. Before you put
-  compose files under [version control](#20-versioning-your-configuration-with-git),
+  compose files under [version control](#21-versioning-your-configuration-with-git),
   move them into a `.env` file beside the compose file (Compose reads it
   automatically, so `MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD}` just works),
   `chmod 600` it, and add it to `.gitignore`. Doing this now is far easier
@@ -839,7 +840,7 @@ docker compose up -d app
 **8. Back up before you touch any of this.** Nextcloud's data lives in three
 places, and a backup needs all three or it's not a real backup: the database
 (dumped with `mysqldump` — see [Backups and
-maintenance](#19-backups-and-maintenance) for the safe way to pass the
+maintenance](#20-backups-and-maintenance) for the safe way to pass the
 password), the `./html` config/app folder, and the actual files in
 `/mnt/storage/nextcloud`. Restoring only the files without the database gives
 you a Nextcloud that has your data on disk but no idea it exists.
@@ -1017,7 +1018,7 @@ that aren't obvious the first time:
 - **A completion watcher is a natural automation candidate** — a small script
   on a schedule that checks the client's API for newly finished downloads and
   sends a notification, rather than you polling the UI. See [Task automation
-  and scheduled jobs](#23-task-automation-and-scheduled-jobs).
+  and scheduled jobs](#24-task-automation-and-scheduled-jobs).
 
 **A worked example — a media server (Plex/Jellyfin) reading an existing library.**
 Unlike the download client above, a media server is usually happiest with
@@ -1111,7 +1112,7 @@ GPU machine:
 - **It's just another API endpoint to your automation.** Anything that already
   talks to a cloud LLM API can usually point at `http://localhost:11434` instead
   for tasks that don't need a bigger model — handy for a scheduled job (see
-  [Task automation and scheduled jobs](#23-task-automation-and-scheduled-jobs))
+  [Task automation and scheduled jobs](#24-task-automation-and-scheduled-jobs))
   that would rather not spend cloud API quota on a trivial classification or
   formatting task.
 - **Free disk space before pulling models** — even "small" models are 1-2GB+
@@ -1178,7 +1179,7 @@ swapon --show
 It exists to absorb brief spikes. Enlarging it to paper over a genuine RAM
 shortage on a microSD boot device is a bad trade: swapping is thousands of
 times slower than RAM, and the constant writes wear the card out (see
-[Backups and maintenance](#19-backups-and-maintenance)). The better fixes, in
+[Backups and maintenance](#20-backups-and-maintenance)). The better fixes, in
 order, are to run fewer or lighter services, cap the greedy one, or move to a
 Pi with more RAM. If you do want more swap without the card wear,
 **zram** (a compressed block of swap that lives in RAM itself) is the usual
@@ -1239,9 +1240,96 @@ journalctl -k --no-pager | grep -i "out of memory"
 ```
 
 An empty result means memory exhaustion is not your culprit — check heat and
-power instead (see [Troubleshooting](#27-troubleshooting)).
+power instead (see [Troubleshooting](#28-troubleshooting)).
 
-## 19. Backups and maintenance
+## 19. Putting several services behind one reverse proxy
+
+Once you're running three or four apps, you're juggling
+`http://192.168.1.42:8080`, `:8096`, `:3001` — port numbers nobody remembers,
+no HTTPS, and a new firewall decision for every app. A **reverse proxy** is a
+single service that listens on ports 80/443, and forwards each incoming
+hostname to the right app behind it. You get memorable names
+(`jellyfin.home.example.com`), one place to terminate TLS, and one place to
+decide what's reachable.
+
+Common choices: [Caddy](https://caddyserver.com/docs/) (smallest config,
+automatic HTTPS), [Traefik](https://doc.traefik.io/traefik/) (configured from
+container labels), and [Nginx Proxy Manager](https://nginxproxymanager.com/)
+(web UI, if you'd rather not edit config files). Caddy is the easiest to read,
+so it's the example here.
+
+**A minimal Caddy setup.** Put the proxy on a shared Docker network so it can
+reach the other containers by name:
+
+```bash
+docker network create proxy      # do this once; add other apps to it too
+mkdir -p ~/apps/caddy && cd ~/apps/caddy
+```
+
+`docker-compose.yml`:
+
+```yaml
+services:
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data:/data          # keeps issued certificates across restarts
+    networks: [proxy]
+networks:
+  proxy:
+    external: true
+```
+
+`Caddyfile` — one block per app, using the container's name and *internal*
+port:
+
+```text
+jellyfin.home.example.com {
+    reverse_proxy jellyfin:8096
+}
+
+uptime.home.example.com {
+    reverse_proxy uptime-kuma:3001
+}
+```
+
+Then `docker compose up -d`, and add `networks: [proxy]` to each app's compose
+file so Caddy can resolve it by container name.
+
+Points that are easy to get wrong:
+
+- **The proxy only helps if the apps stop publishing their own ports.** Once
+  Caddy can reach a container over the shared network, remove that container's
+  `ports:` mapping — otherwise the app is still directly reachable on its old
+  port and bypasses everything you just set up (including, as
+  [step 12](#12-running-services-with-docker) warns, your firewall rules).
+- **Names have to resolve to the Pi.** A hostname like
+  `jellyfin.home.example.com` means nothing until something answers for it —
+  either a wildcard/`A` record in a domain you control pointing at the Pi's LAN
+  IP, or a local DNS server (a Pi-hole or your router, if it supports custom
+  entries) mapping the names internally. Editing each client's `hosts` file
+  works but doesn't scale past a couple of devices.
+- **Automatic HTTPS needs a public challenge or a DNS challenge.** Caddy gets
+  free certificates automatically, but the default HTTP challenge requires the
+  hostname to be publicly reachable on port 80 — which a LAN-only service is
+  not. For internal names, either use the **DNS-01 challenge** with a domain
+  you own (which needs a Caddy build that includes your DNS provider's plugin —
+  the stock image does not ship them), or let Caddy issue its own internal CA
+  certificates and install that CA on your devices. Both are more work than
+  the one-line config above suggests; budget for it.
+- **This is not a substitute for [step 11](#11-reaching-your-pi-from-outside-home).**
+  A reverse proxy on your LAN doesn't make anything reachable from outside, and
+  putting one on the public internet is a separate, deliberate exposure
+  decision — with its own attack surface, since it now speaks to every app you
+  put behind it.
+
+## 20. Backups and maintenance
 
 A home server is only as safe as its backups. Build these habits early:
 
@@ -1284,7 +1372,7 @@ A home server is only as safe as its backups. Build these habits early:
   variable in from the surrounding environment instead, so the value never
   appears in any command line. Keep the value itself in a `chmod 600` env file
   outside version control (see
-  [step 20](#20-versioning-your-configuration-with-git)). Also **check the dump
+  [step 21](#21-versioning-your-configuration-with-git)). Also **check the dump
   is non-empty before you trust it** — a failed dump still creates a 0-byte file and a
   backup script that doesn't check will happily archive nothing:
   ```bash
@@ -1308,7 +1396,7 @@ A home server is only as safe as its backups. Build these habits early:
 - **Keep a running TODO list** of unfinished items. A home server is rarely
   "done" in one sitting.
 
-## 20. Versioning your configuration with git
+## 21. Versioning your configuration with git
 
 Data backups (previous section) protect your *files*. It's also worth keeping
 a **version-controlled snapshot of your configuration** — compose files,
@@ -1330,11 +1418,11 @@ A few rules that matter more here than in a typical code repo:
 - **Keep the repo private**, and if it's pushed to a host like GitHub,
   authenticate non-interactively (a credential helper or deploy key) so an
   automated job can commit and push without a human typing a password.
-- This pairs naturally with [scheduled automation](#23-task-automation-and-scheduled-jobs)
+- This pairs naturally with [scheduled automation](#24-task-automation-and-scheduled-jobs)
   — a nightly job that snapshots changed config, scans it, and commits only if
   there's a real, clean delta.
 
-## 21. Log management
+## 22. Log management
 
 Every service on the Pi writes logs somewhere, and left unmanaged they'll
 eventually fill your disk. `logrotate` is the standard Linux tool for keeping
@@ -1434,7 +1522,7 @@ journald; it will create `/var/log/journal/` for you. Mind the extra SD-card
 writes if you're microSD-based, and keep the `SystemMaxUse=` cap above in place
 either way.
 
-## 22. Integrating third-party device and cloud APIs
+## 23. Integrating third-party device and cloud APIs
 
 Home servers aren't limited to software you install — a lot of useful
 automation comes from **polling an existing device's cloud API** and acting on
@@ -1468,13 +1556,13 @@ logs. The fix is the same third-party-API pattern as above — swap in a
 purpose-built API and then confirm the previously-failing calls actually
 succeed, rather than assuming a config change was the fix.
 
-Run the poller as its own [scheduled job](#23-task-automation-and-scheduled-jobs),
+Run the poller as its own [scheduled job](#24-task-automation-and-scheduled-jobs),
 keep its credentials in a permissions-locked env file (not committed to git —
-see [step 20](#20-versioning-your-configuration-with-git)), and document any
+see [step 21](#21-versioning-your-configuration-with-git)), and document any
 hard limits or gotchas you discover for the specific API next to the script,
 so the next debugging session doesn't start from zero.
 
-## 23. Task automation and scheduled jobs
+## 24. Task automation and scheduled jobs
 
 Most of what keeps a home server healthy without your daily attention is
 **scheduled, unattended jobs**: nightly backups, a weekly summary, a poller
@@ -1509,7 +1597,7 @@ surprises:
   than case-by-case, especially if the job can install software, touch
   networking, or push to a public repo unattended.
 
-## 24. A tiered approval model for automation
+## 25. A tiered approval model for automation
 
 If anything other than you personally changes this box — a cron job, a script,
 or an AI agent — decide up front **how much autonomy it gets**, rather than
@@ -1527,7 +1615,7 @@ case-by-case under pressure. A scheme that works well in practice:
    revert a few minutes out, and only cancel the revert once you've confirmed
    access still works.
 
-## 25. A checklist to verify your setup
+## 26. A checklist to verify your setup
 
 Every section above told you to *do* something. This one tells you how to
 **prove it worked** — because the failure mode of a home server is silent: the
@@ -1586,7 +1674,7 @@ ls -lt /path/to/your/backups | head
 The mount check matters more than it looks: if an external drive fails to
 mount, the mount point still exists as an empty directory on the boot card — so
 a backup script writes happily into it, filling your SD card while appearing to
-succeed (step 19).
+succeed (step 20).
 
 **Health**
 
@@ -1609,7 +1697,7 @@ keeps dying without an obvious log reason, check for an OOM kill (step 18).
   message reaches the device you actually look at. An alerting path is
   untested until a message has travelled it end to end.
 
-## 26. Lessons learned
+## 27. Lessons learned
 
 - **A tunnel is still exposure.** "No port forwarding" doesn't mean private —
   treat every published hostname as a fresh exposure decision.
@@ -1629,7 +1717,7 @@ keeps dying without an obvious log reason, check for an OOM kill (step 18).
 - **Alerts are only useful if they reach a channel you actually check** — a
   dashboard nobody opens is not monitoring.
 
-## 27. Troubleshooting
+## 28. Troubleshooting
 
 - **SSH: "REMOTE HOST IDENTIFICATION HAS CHANGED!"** — appears after you
   re-flash or reinstall the Pi while keeping the same IP/hostname. The Pi has a
@@ -1656,7 +1744,7 @@ keeps dying without an obvious log reason, check for an OOM kill (step 18).
   `ntfsfix -n` to detect the dirty state, then `ntfsfix` to clear it before
   retrying the mount) turns this from a manual fix into something that
   self-heals on every boot — see [Task automation and scheduled
-  jobs](#23-task-automation-and-scheduled-jobs) for wiring a script to run at
+  jobs](#24-task-automation-and-scheduled-jobs) for wiring a script to run at
   boot via systemd. **Remember to retire or rewrite this kind of script if you
   later reformat the drive to a filesystem without a dirty-bit concept** (e.g.
   exFAT — see [Choosing a filesystem for attached
@@ -1676,7 +1764,7 @@ keeps dying without an obvious log reason, check for an OOM kill (step 18).
 - **fail2ban is running but never bans anyone** — it may be watching the wrong
   log source; see the journal-backend note in [step 8](#8-block-brute-force-attacks-fail2ban).
 
-## 28. Further reading
+## 29. Further reading
 
 - [Raspberry Pi official documentation](https://www.raspberrypi.com/documentation/)
 - [Tailscale docs](https://tailscale.com/kb/)
@@ -1692,6 +1780,7 @@ keeps dying without an obvious log reason, check for an OOM kill (step 18).
 - [Nextcloud administration manual](https://docs.nextcloud.com/server/latest/admin_manual/)
 - [Jellyfin documentation](https://jellyfin.org/docs/)
 - [Ollama](https://ollama.com/)
+- [Caddy documentation](https://caddyserver.com/docs/)
 - [logrotate(8) manual](https://linux.die.net/man/8/logrotate)
 - [journald.conf(5) — journal size and persistence](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)
 - [r/homelab](https://www.reddit.com/r/homelab/) and r/selfhosted for community
