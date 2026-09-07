@@ -35,11 +35,11 @@ not all equally essential. If you're starting from nothing:
 | **1–8** | The core build: hardware, OS, login, stable address, SSH keys, firewall, fail2ban | **No.** This is the minimum for a Pi that's safe to leave running. Budget an unhurried evening. |
 | **9–11** | Network awareness and remote access | Read **11** before exposing anything. 9 and 10 can wait a week. |
 | **12** | Docker — the foundation for everything you'll actually run | **No**, if you plan to host any app at all. |
-| **13–17** | Optional services: file shares, monitoring, media, local AI, storage | Pick only what you want. These are independent of each other. |
-| **18–23** | Keeping it alive: backups, config versioning, logs, automation | **18 is not optional.** Do it the same week you put real data on the Pi. |
-| **24–27** | Checklist, lessons, troubleshooting, further reading | Reference material — come back when something breaks. |
+| **13–18** | Optional services and tuning: file shares, monitoring, media, local AI, storage, memory limits | Pick only what you want. These are independent of each other. |
+| **19–24** | Keeping it alive: backups, config versioning, logs, automation | **19 is not optional.** Do it the same week you put real data on the Pi. |
+| **25–28** | Checklist, lessons, troubleshooting, further reading | Reference material — come back when something breaks. |
 
-Two habits worth adopting from section 1, not section 18:
+Two habits worth adopting from section 1, not section 19:
 
 - **Before editing any config file, copy it first.** Every rollback in this
   guide depends on that copy existing.
@@ -67,16 +67,17 @@ Two habits worth adopting from section 1, not section 18:
 15. [Download clients and media libraries](#15-download-clients-and-media-libraries)
 16. [Running a local AI model with Ollama](#16-running-a-local-ai-model-with-ollama)
 17. [Choosing a filesystem for attached storage](#17-choosing-a-filesystem-for-attached-storage)
-18. [Backups and maintenance](#18-backups-and-maintenance)
-19. [Versioning your configuration with git](#19-versioning-your-configuration-with-git)
-20. [Log management](#20-log-management)
-21. [Integrating third-party device and cloud APIs](#21-integrating-third-party-device-and-cloud-apis)
-22. [Task automation and scheduled jobs](#22-task-automation-and-scheduled-jobs)
-23. [A tiered approval model for automation](#23-a-tiered-approval-model-for-automation)
-24. [A checklist to verify your setup](#24-a-checklist-to-verify-your-setup)
-25. [Lessons learned](#25-lessons-learned)
-26. [Troubleshooting](#26-troubleshooting)
-27. [Further reading](#27-further-reading)
+18. [Memory, swap, and container resource limits](#18-memory-swap-and-container-resource-limits)
+19. [Backups and maintenance](#19-backups-and-maintenance)
+20. [Versioning your configuration with git](#20-versioning-your-configuration-with-git)
+21. [Log management](#21-log-management)
+22. [Integrating third-party device and cloud APIs](#22-integrating-third-party-device-and-cloud-apis)
+23. [Task automation and scheduled jobs](#23-task-automation-and-scheduled-jobs)
+24. [A tiered approval model for automation](#24-a-tiered-approval-model-for-automation)
+25. [A checklist to verify your setup](#25-a-checklist-to-verify-your-setup)
+26. [Lessons learned](#26-lessons-learned)
+27. [Troubleshooting](#27-troubleshooting)
+28. [Further reading](#28-further-reading)
 
 ---
 
@@ -88,7 +89,7 @@ A shopping/checklist before you start:
 |---|---|
 | A Raspberry Pi | Any model works; a **Pi 4 or Pi 5 with 4GB+ RAM** is comfortable for several Docker containers. This guide was built on a Pi 5 (8GB). |
 | Power supply | Use the **official supply for your model** (a Pi 5 wants 5V/5A USB-C). Underpowered supplies cause random crashes and SD-card corruption. |
-| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#25-lessons-learned). |
+| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#26-lessons-learned). |
 | A second computer | To flash the OS and to SSH in from. Windows, macOS, or Linux all work. |
 | Ethernet cable (recommended) | Wired is more reliable than Wi-Fi for a server that must stay reachable. |
 | Your home router's login | You'll need it later to reserve an IP address for the Pi. |
@@ -117,7 +118,7 @@ first. It's the one prerequisite skill.
 3. **Connect ethernet** from the Pi to your router, if you can. Wi-Fi works too
    and is configured during flashing.
 4. **Decide where the Pi will physically live.** For rare recovery situations
-   (see [tier 4](#23-a-tiered-approval-model-for-automation)), you'll occasionally
+   (see [tier 4](#24-a-tiered-approval-model-for-automation)), you'll occasionally
    need physical access — so somewhere reachable, not a five-hour round trip.
 
 Do **not** plug in the power supply yet. First boot happens after flashing.
@@ -134,7 +135,7 @@ default:
   output and a Pi that's already running hot has less thermal margin to spare.
 - Check for throttling regularly, not just once after applying the change —
   the two `vcgencmd` commands for this are in
-  [Troubleshooting](#26-troubleshooting).
+  [Troubleshooting](#27-troubleshooting).
 - If you inherit or revisit a Pi and don't remember setting an overclock,
   check `/boot/firmware/config.txt` for `arm_freq`/`over_voltage` lines before
   assuming odd instability is a software problem — it's an easy thing to set
@@ -445,7 +446,7 @@ sudo apt install arp-scan -y
 sudo arp-scan --localnet
 ```
 
-Run this on a schedule (see [Task automation](#22-task-automation-and-scheduled-jobs))
+Run this on a schedule (see [Task automation](#23-task-automation-and-scheduled-jobs))
 and keep a simple text or JSON file of MAC addresses you've already seen — a
 device isn't "new" twice. Route the alert to wherever you actually check
 notifications (see [Uptime monitoring and alerts](#14-uptime-monitoring-and-alerts))
@@ -713,7 +714,7 @@ gotchas that trip people up on a first install.
 you're running from a microSD card, put Nextcloud's data directory on an
 attached SSD/USB drive instead of the card — both for space and because heavy
 file writes wear microSD cards out (see [Lessons
-learned](#25-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
+learned](#26-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
 
 **2. Write the Compose file.** Nextcloud needs two containers: the app itself
 and a database (MariaDB here — Nextcloud's own docs recommend it over SQLite
@@ -770,7 +771,7 @@ services:
 - The two `MYSQL_PASSWORD` values and the matching one in `db.environment`
   **must be identical** — a common first-run failure is a typo between them.
 - Those passwords are sitting in plain text in this file. Before you put
-  compose files under [version control](#19-versioning-your-configuration-with-git),
+  compose files under [version control](#20-versioning-your-configuration-with-git),
   move them into a `.env` file beside the compose file (Compose reads it
   automatically, so `MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD}` just works),
   `chmod 600` it, and add it to `.gitignore`. Doing this now is far easier
@@ -838,7 +839,7 @@ docker compose up -d app
 **8. Back up before you touch any of this.** Nextcloud's data lives in three
 places, and a backup needs all three or it's not a real backup: the database
 (dumped with `mysqldump` — see [Backups and
-maintenance](#18-backups-and-maintenance) for the safe way to pass the
+maintenance](#19-backups-and-maintenance) for the safe way to pass the
 password), the `./html` config/app folder, and the actual files in
 `/mnt/storage/nextcloud`. Restoring only the files without the database gives
 you a Nextcloud that has your data on disk but no idea it exists.
@@ -1016,7 +1017,7 @@ that aren't obvious the first time:
 - **A completion watcher is a natural automation candidate** — a small script
   on a schedule that checks the client's API for newly finished downloads and
   sends a notification, rather than you polling the UI. See [Task automation
-  and scheduled jobs](#22-task-automation-and-scheduled-jobs).
+  and scheduled jobs](#23-task-automation-and-scheduled-jobs).
 
 **A worked example — a media server (Plex/Jellyfin) reading an existing library.**
 Unlike the download client above, a media server is usually happiest with
@@ -1110,7 +1111,7 @@ GPU machine:
 - **It's just another API endpoint to your automation.** Anything that already
   talks to a cloud LLM API can usually point at `http://localhost:11434` instead
   for tasks that don't need a bigger model — handy for a scheduled job (see
-  [Task automation and scheduled jobs](#22-task-automation-and-scheduled-jobs))
+  [Task automation and scheduled jobs](#23-task-automation-and-scheduled-jobs))
   that would rather not spend cloud API quota on a trivial classification or
   formatting task.
 - **Free disk space before pulling models** — even "small" models are 1-2GB+
@@ -1149,7 +1150,98 @@ part-way through:
   intended** — a filesystem that silently drops permissions or symlinks is a
   worse surprise during a restore than during a test.
 
-## 18. Backups and maintenance
+## 18. Memory, swap, and container resource limits
+
+A Pi's RAM is fixed — you can't add more later — so on a box running several
+containers, memory is usually the first resource you run out of. Start by
+seeing where you stand:
+
+```bash
+free -h                                    # total / used / available RAM and swap
+ps -eo pid,comm,rss --sort=-rss | head     # the biggest processes, by resident memory
+docker stats --no-stream                   # per-container CPU and memory
+```
+
+Read the **available** column of `free -h`, not **free**: Linux deliberately
+spends unused RAM on disk cache (the `buff/cache` column), which it hands back
+instantly when a program needs it. A small "free" number with a healthy
+"available" number is normal and not a problem.
+
+**Swap on a Pi is a cushion, not headroom.** Raspberry Pi OS ships a small
+swap *file* (200MB by default) managed by `dphys-swapfile`, configured in
+`/etc/dphys-swapfile` via `CONF_SWAPSIZE`, not by a swap partition:
+
+```bash
+swapon --show
+```
+
+It exists to absorb brief spikes. Enlarging it to paper over a genuine RAM
+shortage on a microSD boot device is a bad trade: swapping is thousands of
+times slower than RAM, and the constant writes wear the card out (see
+[Backups and maintenance](#19-backups-and-maintenance)). The better fixes, in
+order, are to run fewer or lighter services, cap the greedy one, or move to a
+Pi with more RAM. If you do want more swap without the card wear,
+**zram** (a compressed block of swap that lives in RAM itself) is the usual
+choice — the `zram-tools` package sets it up — though it buys you capacity by
+spending CPU, so it helps with mildly-over-committed memory and not with a
+service that genuinely needs more than you have.
+
+**The Pi-specific trap: memory limits silently do nothing by default.**
+Docker's `--memory` flag and Compose's `mem_limit` rely on the kernel's *memory
+cgroup* controller, and stock Raspberry Pi OS boots with that controller
+**disabled**. Docker doesn't fail — it accepts the limit and ignores it. Check
+whether yours is affected:
+
+```bash
+docker info 2>/dev/null | grep -i "WARNING: No memory limit support"
+cat /sys/fs/cgroup/cgroup.controllers      # is "memory" in the list?
+```
+
+If the warning prints, or `memory` is absent from the controller list, no
+memory limit you set is being enforced (a tell-tale symptom: `docker stats`
+reports `0B / 0B` for every container). To enable it, append
+`cgroup_memory=1 cgroup_enable=memory` to the kernel command line in
+`/boot/firmware/cmdline.txt` (`/boot/cmdline.txt` on Debian 11 and older
+images) and reboot.
+
+> **Treat this as a high-consequence edit.** `cmdline.txt` must remain a
+> **single line** — options are space-separated, and a stray newline can leave
+> the Pi unbootable, which is fixed by putting the card in another computer,
+> not over SSH. Back the file up first, change nothing else on the line, and
+> ideally do it while you have physical access to the Pi. Reference:
+> [k3s requirements](https://docs.k3s.io/installation/requirements#operating-systems),
+> which documents the same flags for the same reason.
+
+Once the controller is active, cap the services that can misbehave — a media
+scanner, a transcoder, an indexer, a local model — so one runaway container
+degrades instead of taking the whole box down with it:
+
+```yaml
+services:
+  some-app:
+    image: example/some-app
+    mem_limit: 1g
+    restart: unless-stopped
+```
+
+Two things to understand before you set a number. A container that hits its
+limit gets **killed** by the kernel's OOM killer, not politely slowed — so
+pick a ceiling above the app's normal peak, and rely on `restart:
+unless-stopped` to bring it back. And on Raspberry Pi OS, *swap* limits stay
+unsupported even after the above (`WARNING: No swap limit support` remains),
+so `memswap_limit` is not something to depend on.
+
+Finally, know where to look after an unexplained crash. The kernel logs every
+OOM kill:
+
+```bash
+journalctl -k --no-pager | grep -i "out of memory"
+```
+
+An empty result means memory exhaustion is not your culprit — check heat and
+power instead (see [Troubleshooting](#27-troubleshooting)).
+
+## 19. Backups and maintenance
 
 A home server is only as safe as its backups. Build these habits early:
 
@@ -1192,7 +1284,7 @@ A home server is only as safe as its backups. Build these habits early:
   variable in from the surrounding environment instead, so the value never
   appears in any command line. Keep the value itself in a `chmod 600` env file
   outside version control (see
-  [step 19](#19-versioning-your-configuration-with-git)). Also **check the dump
+  [step 20](#20-versioning-your-configuration-with-git)). Also **check the dump
   is non-empty before you trust it** — a failed dump still creates a 0-byte file and a
   backup script that doesn't check will happily archive nothing:
   ```bash
@@ -1216,7 +1308,7 @@ A home server is only as safe as its backups. Build these habits early:
 - **Keep a running TODO list** of unfinished items. A home server is rarely
   "done" in one sitting.
 
-## 19. Versioning your configuration with git
+## 20. Versioning your configuration with git
 
 Data backups (previous section) protect your *files*. It's also worth keeping
 a **version-controlled snapshot of your configuration** — compose files,
@@ -1238,11 +1330,11 @@ A few rules that matter more here than in a typical code repo:
 - **Keep the repo private**, and if it's pushed to a host like GitHub,
   authenticate non-interactively (a credential helper or deploy key) so an
   automated job can commit and push without a human typing a password.
-- This pairs naturally with [scheduled automation](#22-task-automation-and-scheduled-jobs)
+- This pairs naturally with [scheduled automation](#23-task-automation-and-scheduled-jobs)
   — a nightly job that snapshots changed config, scans it, and commits only if
   there's a real, clean delta.
 
-## 20. Log management
+## 21. Log management
 
 Every service on the Pi writes logs somewhere, and left unmanaged they'll
 eventually fill your disk. `logrotate` is the standard Linux tool for keeping
@@ -1297,6 +1389,35 @@ For a permanent cap, set `SystemMaxUse=200M` in
 `/etc/systemd/journald.conf` and restart with
 `sudo systemctl restart systemd-journald`.
 
+**And don't forget Docker — its container logs are a third, separate pile.**
+With the default `json-file` logging driver, everything a container prints to
+stdout/stderr is appended to a file under `/var/lib/docker/containers/<id>/`
+that **grows without limit** — logrotate doesn't know about it and journald
+doesn't own it. A chatty container can quietly eat gigabytes. Check what
+yours are using:
+
+```bash
+sudo du -ch /var/lib/docker/containers/*/*-json.log | tail -1
+```
+
+Cap it globally by creating `/etc/docker/daemon.json` (the file does not exist
+by default — create it if it's missing, and back it up first if it isn't):
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
+}
+```
+
+Then `sudo systemctl restart docker` to apply. Note two gotchas: restarting the
+Docker daemon restarts your containers, so do it at a quiet moment; and the new
+limit applies to **newly created** containers only — existing ones keep their
+old settings until they're recreated (`docker compose up -d --force-recreate`).
+Per-container overrides go in the compose file under `logging:` if one service
+needs different retention. Reference: [json-file driver
+options](https://docs.docker.com/engine/logging/drivers/json-file/).
+
 **Check whether your logs actually survive a reboot.** The default
 `Storage=auto` writes the journal to disk only if `/var/log/journal/` already
 exists; if it doesn't, logs live in RAM under `/run/log/journal/` and are wiped
@@ -1313,7 +1434,7 @@ journald; it will create `/var/log/journal/` for you. Mind the extra SD-card
 writes if you're microSD-based, and keep the `SystemMaxUse=` cap above in place
 either way.
 
-## 21. Integrating third-party device and cloud APIs
+## 22. Integrating third-party device and cloud APIs
 
 Home servers aren't limited to software you install — a lot of useful
 automation comes from **polling an existing device's cloud API** and acting on
@@ -1347,13 +1468,13 @@ logs. The fix is the same third-party-API pattern as above — swap in a
 purpose-built API and then confirm the previously-failing calls actually
 succeed, rather than assuming a config change was the fix.
 
-Run the poller as its own [scheduled job](#22-task-automation-and-scheduled-jobs),
+Run the poller as its own [scheduled job](#23-task-automation-and-scheduled-jobs),
 keep its credentials in a permissions-locked env file (not committed to git —
-see [step 19](#19-versioning-your-configuration-with-git)), and document any
+see [step 20](#20-versioning-your-configuration-with-git)), and document any
 hard limits or gotchas you discover for the specific API next to the script,
 so the next debugging session doesn't start from zero.
 
-## 22. Task automation and scheduled jobs
+## 23. Task automation and scheduled jobs
 
 Most of what keeps a home server healthy without your daily attention is
 **scheduled, unattended jobs**: nightly backups, a weekly summary, a poller
@@ -1388,7 +1509,7 @@ surprises:
   than case-by-case, especially if the job can install software, touch
   networking, or push to a public repo unattended.
 
-## 23. A tiered approval model for automation
+## 24. A tiered approval model for automation
 
 If anything other than you personally changes this box — a cron job, a script,
 or an AI agent — decide up front **how much autonomy it gets**, rather than
@@ -1406,7 +1527,7 @@ case-by-case under pressure. A scheme that works well in practice:
    revert a few minutes out, and only cancel the revert once you've confirmed
    access still works.
 
-## 24. A checklist to verify your setup
+## 25. A checklist to verify your setup
 
 Every section above told you to *do* something. This one tells you how to
 **prove it worked** — because the failure mode of a home server is silent: the
@@ -1465,7 +1586,7 @@ ls -lt /path/to/your/backups | head
 The mount check matters more than it looks: if an external drive fails to
 mount, the mount point still exists as an empty directory on the boot card — so
 a backup script writes happily into it, filling your SD card while appearing to
-succeed (step 18).
+succeed (step 19).
 
 **Health**
 
@@ -1473,9 +1594,11 @@ succeed (step 18).
 vcgencmd get_throttled            # 0x0 = never throttled since boot
 systemctl --failed                # should list zero units
 docker ps --format '{{.Names}}\t{{.Status}}'
+free -h                           # read the "available" column, not "free"
 ```
 
-Any container showing `Restarting` is crash-looping, not running.
+Any container showing `Restarting` is crash-looping, not running — and if one
+keeps dying without an obvious log reason, check for an OOM kill (step 18).
 
 **The two checks nothing on this list can do for you**
 
@@ -1486,7 +1609,7 @@ Any container showing `Restarting` is crash-looping, not running.
   message reaches the device you actually look at. An alerting path is
   untested until a message has travelled it end to end.
 
-## 25. Lessons learned
+## 26. Lessons learned
 
 - **A tunnel is still exposure.** "No port forwarding" doesn't mean private —
   treat every published hostname as a fresh exposure decision.
@@ -1506,7 +1629,7 @@ Any container showing `Restarting` is crash-looping, not running.
 - **Alerts are only useful if they reach a channel you actually check** — a
   dashboard nobody opens is not monitoring.
 
-## 26. Troubleshooting
+## 27. Troubleshooting
 
 - **SSH: "REMOTE HOST IDENTIFICATION HAS CHANGED!"** — appears after you
   re-flash or reinstall the Pi while keeping the same IP/hostname. The Pi has a
@@ -1533,7 +1656,7 @@ Any container showing `Restarting` is crash-looping, not running.
   `ntfsfix -n` to detect the dirty state, then `ntfsfix` to clear it before
   retrying the mount) turns this from a manual fix into something that
   self-heals on every boot — see [Task automation and scheduled
-  jobs](#22-task-automation-and-scheduled-jobs) for wiring a script to run at
+  jobs](#23-task-automation-and-scheduled-jobs) for wiring a script to run at
   boot via systemd. **Remember to retire or rewrite this kind of script if you
   later reformat the drive to a filesystem without a dirty-bit concept** (e.g.
   exFAT — see [Choosing a filesystem for attached
@@ -1553,7 +1676,7 @@ Any container showing `Restarting` is crash-looping, not running.
 - **fail2ban is running but never bans anyone** — it may be watching the wrong
   log source; see the journal-backend note in [step 8](#8-block-brute-force-attacks-fail2ban).
 
-## 27. Further reading
+## 28. Further reading
 
 - [Raspberry Pi official documentation](https://www.raspberrypi.com/documentation/)
 - [Tailscale docs](https://tailscale.com/kb/)
