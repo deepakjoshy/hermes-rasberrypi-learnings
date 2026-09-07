@@ -6,11 +6,19 @@ gives you the **actual command to run** and a plain-English explanation of
 **what it does and why**, so you're never copy-pasting blind.
 
 > **About this guide**: it grew out of one person's real Raspberry Pi 5 setup
-> (documented with help from an AI ops agent) and was generalized so anyone can
-> follow it. The specific tools shown (Cloudflare Tunnel, Tailscale, Docker,
-> ufw, fail2ban) are the ones actually used and tested on Debian 12 (Bookworm),
-> 64-bit — treat them as recommended defaults, not the only options. Where a
-> step involves a real choice, alternatives are noted.
+> and was generalized so anyone can follow it. The specific tools shown
+> (Cloudflare Tunnel, Tailscale, Docker, ufw, fail2ban) are the ones actually
+> used and tested on Debian 12 (Bookworm), 64-bit — treat them as recommended
+> defaults, not the only options. Where a step involves a real choice,
+> alternatives are noted.
+>
+> That server is administered day to day by an **AI ops agent**
+> ([Hermes](https://github.com/NousResearch/hermes-agent)) running on the Pi
+> itself — it maintains this document, and most of the gotchas below were found
+> by it while fixing something real. That setup is the subject of
+> [step 25](#25-running-an-ai-ops-agent-on-the-server). It is genuinely optional,
+> though: sections 1–8 are the server, and everything here works whether or not
+> you ever run an agent.
 
 ## Who this is for
 
