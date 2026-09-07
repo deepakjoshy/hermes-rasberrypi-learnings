@@ -1532,11 +1532,33 @@ uptime.home.example.com {
 }
 ```
 
-Then `docker compose up -d`, and add `networks: [proxy]` to each app's compose
-file so Caddy can resolve it by container name.
+Then `docker compose up -d`. To put an app behind the proxy, each app's compose
+file needs **both** halves — the service joins the network, *and* the network is
+declared as external so Compose attaches to the existing one instead of trying
+to create its own:
+
+```yaml
+services:
+  jellyfin:
+    # ...
+    networks: [proxy]
+networks:
+  proxy:
+    external: true
+```
+
+Adding only `networks: [proxy]` to the service fails immediately with
+`service "jellyfin" refers to undefined network proxy: invalid compose project`.
+Once both are present, Caddy can resolve the app by its container name.
 
 Points that are easy to get wrong:
 
+- **Create the `Caddyfile` before the first `docker compose up`.** A bind mount
+  whose host path does not exist yet is created by Docker as an **empty
+  directory**, not a file — so Caddy starts, finds a directory where its config
+  should be, and serves nothing. If you see that, `docker compose down`, remove
+  the stray directory, write the real file, and start again. This applies to
+  every single-file bind mount, not just Caddy's.
 - **The proxy only helps if the apps stop publishing their own ports.** Once
   Caddy can reach a container over the shared network, remove that container's
   `ports:` mapping — otherwise the app is still directly reachable on its old
