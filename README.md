@@ -132,11 +132,9 @@ default:
 - Always pair a frequency bump with adequate cooling (a case fan, not just a
   passive heatsink, once you're pushing past stock) — overclocking raises heat
   output and a Pi that's already running hot has less thermal margin to spare.
-- Check for throttling regularly, not just once after applying the change:
-  ```bash
-  vcgencmd measure_temp
-  vcgencmd get_throttled   # 0x0 means no throttling has occurred
-  ```
+- Check for throttling regularly, not just once after applying the change —
+  the two `vcgencmd` commands for this are in
+  [Troubleshooting](#26-troubleshooting).
 - If you inherit or revisit a Pi and don't remember setting an overclock,
   check `/boot/firmware/config.txt` for `arm_freq`/`over_voltage` lines before
   assuming odd instability is a software problem — it's an easy thing to set
@@ -747,7 +745,7 @@ services:
     depends_on:
       - db
     ports:
-      - "8080:80"
+      - "<pi-ip>:8080:80"
     environment:
       - MYSQL_HOST=db
       - MYSQL_DATABASE=nextcloud
@@ -759,12 +757,24 @@ services:
 ```
 
 - `depends_on` makes Docker start the database before the app.
+- The `ports:` line binds to the Pi's LAN address for the same reason as the
+  Uptime Kuma example above: a bare `"8080:80"` publishes on **every**
+  interface and [Docker's iptables rules sit ahead of ufw's](#7-set-up-a-firewall-ufw),
+  so the firewall would not stop it. If you later put Nextcloud behind a
+  [tunnel](#11-reaching-your-pi-from-outside-home), the tunnel reaches it from
+  the Pi itself — you do not need it published more widely to do that.
 - `./db` and `./html` keep the database and Nextcloud's own app files next to
   the compose file; `/mnt/storage/nextcloud` (the path you planned in step 1)
   is where actual user files live — mapped in separately so you can put it on
   different, larger storage than the app itself.
 - The two `MYSQL_PASSWORD` values and the matching one in `db.environment`
   **must be identical** — a common first-run failure is a typo between them.
+- Those passwords are sitting in plain text in this file. Before you put
+  compose files under [version control](#19-versioning-your-configuration-with-git),
+  move them into a `.env` file beside the compose file (Compose reads it
+  automatically, so `MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD}` just works),
+  `chmod 600` it, and add it to `.gitignore`. Doing this now is far easier
+  than scrubbing a password out of git history later.
 
 **3. Start it and run the setup wizard.**
 
@@ -1044,9 +1054,9 @@ services:
   Linux user that already owns your media files, or Plex's process won't be
   able to read them even though the volume mounted successfully.
 - Claim the server via the vendor's web setup (`http://<pi-ip>:32400/web`) on
-  first run, then keep it **LAN/VPN-only** by default — like other admin-ish
-  services in this guide, only tunnel it publicly if you deliberately want
-  people outside your household streaming from it.
+  first run. Note that with `network_mode: host` the container ignores ufw the
+  same way a published port does, so "LAN-only" here is a choice you make in
+  the media server's own settings, not something the firewall enforces for you.
 
 ## 16. Running a local AI model with Ollama
 
@@ -1537,6 +1547,11 @@ Any container showing `Restarting` is crash-looping, not running.
 - [unattended-upgrades (Debian wiki)](https://wiki.debian.org/UnattendedUpgrades)
 - [Samba documentation](https://www.samba.org/samba/docs/)
 - [Uptime Kuma](https://github.com/louislam/uptime-kuma)
+- [Nextcloud administration manual](https://docs.nextcloud.com/server/latest/admin_manual/)
+- [Jellyfin documentation](https://jellyfin.org/docs/)
+- [Ollama](https://ollama.com/)
+- [logrotate(8) manual](https://linux.die.net/man/8/logrotate)
+- [journald.conf(5) — journal size and persistence](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)
 - [r/homelab](https://www.reddit.com/r/homelab/) and r/selfhosted for community
   setups and troubleshooting
 
