@@ -478,7 +478,7 @@ also schedule an automatic reboot for a quiet hour if a patch needs one.
 
 **Confirm it actually works — don't just assume.** A silent auto-updater that
 isn't really running is worse than none, because you'll *believe* you're
-patched. Do a dry run (note the binary is singular, `unattended-upgrade`):
+patched. Do a dry run:
 
 ```bash
 sudo unattended-upgrade --dry-run --debug
@@ -967,15 +967,21 @@ that aren't obvious the first time:
   Description=qBittorrent-nox
 
   [Service]
-  ExecStart=/usr/bin/qbittorrent-nox --webui-port=8080
+  ExecStart=/usr/bin/qbittorrent-nox --webui-port=8081
   Restart=on-failure
 
   [Install]
   WantedBy=default.target
   ```
   ```bash
+  systemctl --user daemon-reload
   systemctl --user enable --now qbittorrent
   ```
+  `daemon-reload` is what makes systemd notice a unit file you just created.
+  Pick a web-UI port nothing else is already using: `8080` is a very common
+  default and collides with the Nextcloud example in
+  [step 12](#12-running-services-with-docker), so check first with
+  `sudo ss -tulpn | grep ':8081'` and pick another if it answers.
   **The gotcha that catches everyone with user services:** by default a systemd
   *user* service only runs while you're actually logged in, and it stops the
   moment you close your SSH session — and it won't start at boot. To let it run
@@ -1260,11 +1266,23 @@ sudo journalctl --vacuum-time=2weeks  # or drop anything older than 2 weeks
 
 For a permanent cap, set `SystemMaxUse=200M` in
 `/etc/systemd/journald.conf` and restart with
-`sudo systemctl restart systemd-journald`. One Pi-specific note: by default
-many images keep the journal only in RAM (`/run`, wiped on reboot). If you want
-logs to **survive a reboot** — useful for diagnosing a crash that rebooted the
-Pi — set `Storage=persistent` in the same file, which moves them to
-`/var/log/journal/` (mind the extra SD-card writes if you're microSD-based).
+`sudo systemctl restart systemd-journald`.
+
+**Check whether your logs actually survive a reboot.** The default
+`Storage=auto` writes the journal to disk only if `/var/log/journal/` already
+exists; if it doesn't, logs live in RAM under `/run/log/journal/` and are wiped
+on every reboot. Which one you get depends on the image, so check rather than
+assume:
+
+```bash
+ls -d /var/log/journal >/dev/null 2>&1 && echo persistent || echo "volatile (RAM only)"
+```
+
+If it reports volatile and you want logs to survive a crash-reboot — the case
+where they matter most — set `Storage=persistent` in the same file and restart
+journald; it will create `/var/log/journal/` for you. Mind the extra SD-card
+writes if you're microSD-based, and keep the `SystemMaxUse=` cap above in place
+either way.
 
 ## 21. Integrating third-party device and cloud APIs
 
