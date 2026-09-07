@@ -567,8 +567,16 @@ against a known-devices list, alerting only on new entries:
 
 ```bash
 sudo apt install arp-scan -y
-sudo arp-scan --localnet
+sudo arp-scan --interface=eth0 --localnet    # name your LAN interface explicitly
 ```
+
+**Name the interface.** `--localnet` derives the range to scan from an
+interface's own address and netmask, and if you don't say which interface,
+`arp-scan` picks the lowest-numbered configured, up, non-loopback one. On a Pi
+running Docker or a VPN that is very often `docker0` (`172.17.0.0/16`) or a
+tunnel interface rather than your LAN — so the scan succeeds, reports a handful
+of containers, and never looks at your network at all. Check what you have with
+`ip -brief addr` and pass the right name (`eth0` wired, `wlan0` Wi-Fi).
 
 Run this on a schedule (see [Task automation](#24-task-automation-and-scheduled-jobs))
 and keep a simple text or JSON file of MAC addresses you've already seen — a
@@ -1319,8 +1327,20 @@ GPU machine:
 - **Free disk space before pulling models** — even "small" models are 1-2GB+
   each, and they add up on a boot microSD the same way any other write-heavy
   data does (see [Choosing a filesystem for attached storage](#17-choosing-a-filesystem-for-attached-storage)),
-  or store the Ollama model directory on external storage via the
-  `OLLAMA_MODELS` environment variable if space is tight.
+  or store the Ollama model directory on external storage if space is tight.
+  Note that `OLLAMA_MODELS` is read by the **server**, not by your shell:
+  exporting it in your terminal changes nothing, because the daemon installed
+  above runs under its own `ollama` user from a systemd unit with its own
+  environment. Set it with a drop-in and make sure that user can write the new
+  path:
+  ```bash
+  sudo systemctl edit ollama        # add: [Service] then Environment="OLLAMA_MODELS=/mnt/storage/ollama"
+  sudo install -d -o ollama -g ollama /mnt/storage/ollama
+  sudo systemctl restart ollama
+  systemctl show ollama -p Environment    # confirm the variable is actually there
+  ```
+  Skipping the ownership step gives you a service that starts and then fails to
+  pull anything.
 
 ## 17. Choosing a filesystem for attached storage
 
@@ -1366,13 +1386,24 @@ spends unused RAM on disk cache (the `buff/cache` column), which it hands back
 instantly when a program needs it. A small "free" number with a healthy
 "available" number is normal and not a problem.
 
-**Swap on a Pi is a cushion, not headroom.** Raspberry Pi OS ships a small
-swap *file* (200MB by default) managed by `dphys-swapfile`, configured in
-`/etc/dphys-swapfile` via `CONF_SWAPSIZE`, not by a swap partition:
+**Swap on a Pi is a cushion, not headroom.** Raspberry Pi OS swaps to a
+*file* managed by `dphys-swapfile`, configured in `/etc/dphys-swapfile`, not to
+a swap partition. Don't assume a size — read the one you actually have:
 
 ```bash
-swapon --show
+swapon --show                              # actual size in use right now
+grep -E '^CONF_(SWAPSIZE|MAXSWAP)' /etc/dphys-swapfile
 ```
+
+The number varies by image and by how the file was sized, so figures quoted in
+older guides are unreliable. What is fixed is the *logic*: `CONF_SWAPSIZE` sets
+an absolute size in MB, and if it is left **empty** the size is computed as
+`CONF_SWAPFACTOR` (default 2) times your RAM — then clamped by `CONF_MAXSWAP`
+(default 2048 MB) and by `CONF_MAXDISK_PCT` (default 50% of the free space on
+the filesystem holding the file). So on an 8GB Pi the "computed" answer is not
+16GB; it is whichever of those two ceilings bites first. Changes take effect
+via `sudo dphys-swapfile swapoff && sudo dphys-swapfile setup && sudo
+dphys-swapfile swapon`, not by editing the file alone.
 
 It exists to absorb brief spikes. Enlarging it to paper over a genuine RAM
 shortage on a microSD boot device is a bad trade: swapping is thousands of
@@ -2409,9 +2440,17 @@ pass you were trying to catch.
 ```bash
 vcgencmd get_throttled            # throttled=0x0 = clean; anything else, decode it (step 29)
 systemctl --failed                # should list zero units
-docker ps --format '{{.Names}}\t{{.Status}}'
+docker ps -a --format '{{.Names}}\t{{.Status}}'
 free -h                           # read the "available" column, not "free"
 ```
+
+Note the `-a` on `docker ps`. Without it the command lists only *running*
+containers, so a service that has stopped dead — the exact failure this
+checklist exists to catch — is not reported as broken; it simply isn't in the
+output, and a short, clean-looking list reads like a pass. (Verified: a
+container that exits is absent from `docker ps` and shown as
+`Exited (3)` by `docker ps -a`.) Read the list against the set of services you
+expect to be running, not just the statuses printed.
 
 Any container showing `Restarting` is crash-looping, not running — and if one
 keeps dying without an obvious log reason, check for an OOM kill (step 18).
