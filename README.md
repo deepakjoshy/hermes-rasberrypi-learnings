@@ -36,8 +36,8 @@ not all equally essential. If you're starting from nothing:
 | **9–11** | Network awareness and remote access | Read **11** before exposing anything. 9 and 10 can wait a week. |
 | **12** | Docker — the foundation for everything you'll actually run | **No**, if you plan to host any app at all. |
 | **13–19** | Optional services and tuning: file shares, monitoring, media, local AI, storage, memory limits, reverse proxy | Pick only what you want. These are independent of each other. |
-| **20–25** | Keeping it alive: backups, config versioning, logs, automation | **20 is not optional.** Do it the same week you put real data on the Pi. |
-| **26–29** | Checklist, lessons, troubleshooting, further reading | Reference material — come back when something breaks. |
+| **20–26** | Keeping it alive: backups, config versioning, logs, automation, AI ops agent | **20 is not optional.** Do it the same week you put real data on the Pi. |
+| **27–30** | Checklist, lessons, troubleshooting, further reading | Reference material — come back when something breaks. |
 
 Two habits worth adopting from section 1, not section 20:
 
@@ -74,11 +74,12 @@ Two habits worth adopting from section 1, not section 20:
 22. [Log management](#22-log-management)
 23. [Integrating third-party device and cloud APIs](#23-integrating-third-party-device-and-cloud-apis)
 24. [Task automation and scheduled jobs](#24-task-automation-and-scheduled-jobs)
-25. [A tiered approval model for automation](#25-a-tiered-approval-model-for-automation)
-26. [A checklist to verify your setup](#26-a-checklist-to-verify-your-setup)
-27. [Lessons learned](#27-lessons-learned)
-28. [Troubleshooting](#28-troubleshooting)
-29. [Further reading](#29-further-reading)
+25. [Running an AI ops agent on the server](#25-running-an-ai-ops-agent-on-the-server)
+26. [A tiered approval model for automation](#26-a-tiered-approval-model-for-automation)
+27. [A checklist to verify your setup](#27-a-checklist-to-verify-your-setup)
+28. [Lessons learned](#28-lessons-learned)
+29. [Troubleshooting](#29-troubleshooting)
+30. [Further reading](#30-further-reading)
 
 ---
 
@@ -90,7 +91,7 @@ A shopping/checklist before you start:
 |---|---|
 | A Raspberry Pi | Any model works; a **Pi 4 or Pi 5 with 4GB+ RAM** is comfortable for several Docker containers. This guide was built on a Pi 5 (8GB). |
 | Power supply | Use the **official supply for your model** (a Pi 5 wants 5V/5A USB-C). Underpowered supplies cause random crashes and SD-card corruption. |
-| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#27-lessons-learned). |
+| Boot storage | A **32GB+ microSD card** (A1/A2-rated) to start. For anything database-heavy running 24/7, plan to move to an **SSD/NVMe** later — see [Lessons learned](#28-lessons-learned). |
 | A second computer | To flash the OS and to SSH in from. Windows, macOS, or Linux all work. |
 | Ethernet cable (recommended) | Wired is more reliable than Wi-Fi for a server that must stay reachable. |
 | Your home router's login | You'll need it later to reserve an IP address for the Pi. |
@@ -119,7 +120,7 @@ first. It's the one prerequisite skill.
 3. **Connect ethernet** from the Pi to your router, if you can. Wi-Fi works too
    and is configured during flashing.
 4. **Decide where the Pi will physically live.** For rare recovery situations
-   (see [tier 4](#25-a-tiered-approval-model-for-automation)), you'll occasionally
+   (see [tier 4](#26-a-tiered-approval-model-for-automation)), you'll occasionally
    need physical access — so somewhere reachable, not a five-hour round trip.
 
 Do **not** plug in the power supply yet. First boot happens after flashing.
@@ -136,7 +137,7 @@ default:
   output and a Pi that's already running hot has less thermal margin to spare.
 - Check for throttling regularly, not just once after applying the change —
   the two `vcgencmd` commands for this are in
-  [Troubleshooting](#28-troubleshooting).
+  [Troubleshooting](#29-troubleshooting).
 - If you inherit or revisit a Pi and don't remember setting an overclock,
   check `/boot/firmware/config.txt` for `arm_freq`/`over_voltage` lines before
   assuming odd instability is a software problem — it's an easy thing to set
@@ -832,7 +833,7 @@ gotchas that trip people up on a first install.
 you're running from a microSD card, put Nextcloud's data directory on an
 attached SSD/USB drive instead of the card — both for space and because heavy
 file writes wear microSD cards out (see [Lessons
-learned](#27-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
+learned](#28-lessons-learned)). Decide the path now, e.g. `/mnt/storage/nextcloud`.
 
 **2. Write the Compose file.** Nextcloud needs two containers: the app itself
 and a database (MariaDB here — Nextcloud's own docs recommend it over SQLite
@@ -1375,7 +1376,7 @@ journalctl -k --no-pager | grep -i "out of memory"
 ```
 
 An empty result means memory exhaustion is not your culprit — check heat and
-power instead (see [Troubleshooting](#28-troubleshooting)).
+power instead (see [Troubleshooting](#29-troubleshooting)).
 
 ## 19. Putting several services behind one reverse proxy
 
@@ -1565,8 +1566,8 @@ log files bounded — rotating (renaming/compressing) them on a schedule or size
 trigger and deleting old ones.
 
 Most distro packages already ship a logrotate config for their own logs, but
-anything writing to a custom path (an app under `~/.hermes/logs/`, a script's
-own log file, etc.) needs its own rule:
+anything writing to a custom path (an [AI ops agent](#25-running-an-ai-ops-agent-on-the-server)
+under `~/.hermes/logs/`, a script's own log file, etc.) needs its own rule:
 
 ```bash
 sudo nano /etc/logrotate.d/my-app
@@ -1740,7 +1741,109 @@ surprises:
   than case-by-case, especially if the job can install software, touch
   networking, or push to a public repo unattended.
 
-## 25. A tiered approval model for automation
+## 25. Running an AI ops agent on the server
+
+Everything so far assumed *you* are the one typing commands. A newer option is
+to run an **AI ops agent** on the Pi itself: a persistent process with terminal
+access that you talk to in plain English, which can investigate problems, run
+scheduled jobs, and explain what it finds. This guide was itself written with
+one, so it's worth being concrete about what that's actually good for — and
+where it is a liability.
+
+**Where an agent genuinely helps**
+
+- **Diagnosis over memorization.** "Why is this container restarting?" is a
+  question you can ask instead of remembering which of `docker logs`,
+  `journalctl`, and `dmesg` to reach for. This is the single biggest win for a
+  beginner.
+- **Scheduled jobs that summarize rather than dump.** A cron job that emails you
+  200 lines of log is noise; one that reads the logs and messages you only when
+  something genuinely changed is useful (see
+  [Task automation](#24-task-automation-and-scheduled-jobs)).
+- **A written record.** An agent that maintains its own notes file about your
+  machine gives you a changelog you'd never keep by hand.
+
+**Where it is a liability — read this part twice**
+
+- **It has your shell.** An agent with terminal access can do anything you can,
+  including destroy the machine. This is not hypothetical: the whole reason
+  [the tiered approval model](#26-a-tiered-approval-model-for-automation)
+  exists is to bound that.
+- **It is confidently wrong sometimes.** It will state things that sound
+  authoritative and are false. Ask it to *show you the command output* it based
+  a claim on — and treat "I verified it" as a claim needing evidence too.
+- **Anything it can reach, it can leak.** A prompt is not a security boundary.
+  Keep credentials in permission-locked files, and assume anything the agent can
+  read could end up in a reply.
+- **It runs on someone's model.** Unless you point it at a
+  [local model](#16-running-a-local-ai-model-with-ollama), your commands and
+  file contents go to a cloud provider. Decide if you're OK with that *before*
+  pointing it at private data.
+
+### Installing one (Hermes as the worked example)
+
+[Hermes](https://github.com/NousResearch/hermes-agent) is the agent used to
+build this guide, so it's the concrete example here — the same reasoning applies
+to any comparable tool. On a Pi running 64-bit Raspberry Pi OS:
+
+```bash
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+```
+
+As with any `curl | bash` installer, read the script first if you'd rather not
+run an unreviewed remote script — the same caution as the Docker and Ollama
+installers earlier. It pulls in Python 3.11, Node.js, and its own dependencies,
+then walks you through provider and messaging setup:
+
+```bash
+hermes setup          # interactive: model provider, API key, messaging platform
+hermes                # start an interactive session
+```
+
+Useful subcommands once it's running:
+
+| Command | What it does |
+|---|---|
+| `hermes setup` | Interactive configuration wizard |
+| `hermes config` | View and edit configuration directly |
+| `hermes cron` | Manage scheduled jobs |
+| `hermes gateway` | Messaging gateway (Telegram, Discord, and others) |
+| `hermes tools` | Choose which tools are enabled per platform |
+| `hermes logs` | View and filter its logs |
+| `hermes send` | Send a message from a script or cron job |
+
+Configuration lives in `~/.hermes/config.yaml`, secrets in `~/.hermes/.env`
+(keep it `chmod 600` and out of git — see
+[step 21](#21-versioning-your-configuration-with-git)), and logs in
+`~/.hermes/logs/`, which is exactly the kind of custom path that needs its own
+logrotate rule ([step 22](#22-log-management)).
+
+### Setting it up sanely
+
+- **Give it a written operating contract.** The single highest-value thing you
+  can do is write down, in a file the agent reads at the start of every session,
+  what it may do without asking and what it must ask about first. That is what
+  [the next section](#26-a-tiered-approval-model-for-automation) describes, and
+  it matters far more than which agent you pick.
+- **Have it keep notes on your machine.** A file it updates with what's
+  installed, what changed, and what's still open makes every later session
+  start informed instead of blind.
+- **Connect it to the alert channel you already use** rather than a new one
+  ([step 14](#14-uptime-monitoring-and-alerts)).
+- **Watch what it costs.** A cloud-model agent running scheduled jobs consumes
+  quota on a schedule, whether or not anything interesting happened. Prefer jobs
+  that stay silent when there's nothing to report.
+- **Don't let it be your only way in.** If the agent is how you administer the
+  box, a broken agent is a lockout. Keep SSH working independently
+  ([step 6](#6-secure-your-ssh-access)) and a
+  [VPN fallback](#11-reaching-your-pi-from-outside-home).
+
+> **If you expose its web or chat interface, that is a fresh exposure decision**
+> under [step 11](#11-reaching-your-pi-from-outside-home) — and a higher-stakes
+> one than usual, because the thing behind the hostname has a shell on your
+> server. Put it behind a VPN or an auth gate; never publish it bare.
+
+## 26. A tiered approval model for automation
 
 If anything other than you personally changes this box — a cron job, a script,
 or an AI agent — decide up front **how much autonomy it gets**, rather than
@@ -1758,7 +1861,7 @@ case-by-case under pressure. A scheme that works well in practice:
    revert a few minutes out, and only cancel the revert once you've confirmed
    access still works.
 
-## 26. A checklist to verify your setup
+## 27. A checklist to verify your setup
 
 Every section above told you to *do* something. This one tells you how to
 **prove it worked** — because the failure mode of a home server is silent: the
@@ -1849,7 +1952,7 @@ keeps dying without an obvious log reason, check for an OOM kill (step 18).
   message reaches the device you actually look at. An alerting path is
   untested until a message has travelled it end to end.
 
-## 27. Lessons learned
+## 28. Lessons learned
 
 - **A tunnel is still exposure.** "No port forwarding" doesn't mean private —
   treat every published hostname as a fresh exposure decision.
@@ -1869,7 +1972,7 @@ keeps dying without an obvious log reason, check for an OOM kill (step 18).
 - **Alerts are only useful if they reach a channel you actually check** — a
   dashboard nobody opens is not monitoring.
 
-## 28. Troubleshooting
+## 29. Troubleshooting
 
 - **SSH: "REMOTE HOST IDENTIFICATION HAS CHANGED!"** — appears after you
   re-flash or reinstall the Pi while keeping the same IP/hostname. The Pi has a
@@ -1916,7 +2019,7 @@ keeps dying without an obvious log reason, check for an OOM kill (step 18).
 - **fail2ban is running but never bans anyone** — it may be watching the wrong
   log source; see the journal-backend note in [step 8](#8-block-brute-force-attacks-fail2ban).
 
-## 29. Further reading
+## 30. Further reading
 
 - [Raspberry Pi official documentation](https://www.raspberrypi.com/documentation/)
 - [Tailscale docs](https://tailscale.com/kb/)
@@ -1932,6 +2035,7 @@ keeps dying without an obvious log reason, check for an OOM kill (step 18).
 - [Nextcloud administration manual](https://docs.nextcloud.com/server/latest/admin_manual/)
 - [Jellyfin documentation](https://jellyfin.org/docs/)
 - [Ollama](https://ollama.com/)
+- [Hermes agent](https://github.com/NousResearch/hermes-agent)
 - [Caddy documentation](https://caddyserver.com/docs/)
 - [logrotate(8) manual](https://linux.die.net/man/8/logrotate)
 - [journald.conf(5) — journal size and persistence](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)
