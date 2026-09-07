@@ -1267,9 +1267,13 @@ cgroup* controller, and stock Raspberry Pi OS boots with that controller
 whether yours is affected:
 
 ```bash
-docker info 2>/dev/null | grep -i "WARNING: No memory limit support"
+docker info 2>&1 | grep -i "no memory limit support"
 cat /sys/fs/cgroup/cgroup.controllers      # is "memory" in the list?
 ```
+
+Note the `2>&1`: `docker info` prints its warnings to **stderr**, so the
+`2>/dev/null` that many examples use throws away the exact line you are looking
+for and makes an affected Pi look healthy.
 
 If the warning prints, or `memory` is absent from the controller list, no
 memory limit you set is being enforced (a tell-tale symptom: `docker stats`
@@ -1554,12 +1558,20 @@ For a permanent cap, set `SystemMaxUse=200M` in
 With the default `json-file` logging driver, everything a container prints to
 stdout/stderr is appended to a file under `/var/lib/docker/containers/<id>/`
 that **grows without limit** — logrotate doesn't know about it and journald
-doesn't own it. A chatty container can quietly eat gigabytes. Check what
-yours are using:
+doesn't own it. A chatty container can quietly eat gigabytes. Check what yours
+are using:
 
 ```bash
-sudo du -ch /var/lib/docker/containers/*/*-json.log | tail -1
+sudo find /var/lib/docker/containers -name '*-json.log' -exec du -ch {} + | tail -1
 ```
+
+The `find` form is not fussiness. `/var/lib/docker/containers` is readable only
+by root (`drwx--x---`), and a shell expands `*/*-json.log` **before** `sudo`
+runs — as you, without permission — so the obvious
+`sudo du -ch /var/lib/docker/containers/*/*-json.log` reports
+`No such file or directory` and a reassuring `0 total` even when the logs are
+gigabytes. Quoting the pattern hands the matching to `find`, which is already
+running as root.
 
 Cap it globally by creating `/etc/docker/daemon.json` (the file does not exist
 by default — create it if it's missing, and back it up first if it isn't):
@@ -1740,14 +1752,17 @@ stopped (step 10).
 
 ```bash
 df -h                             # nothing near 100%
-findmnt --target /mnt/storage     # external drive actually mounted, not an empty dir
+findmnt -M /mnt/storage || echo "NOT MOUNTED"   # drive mounted, not an empty dir
 ls -lt /path/to/your/backups | head
 ```
 
 The mount check matters more than it looks: if an external drive fails to
 mount, the mount point still exists as an empty directory on the boot card — so
 a backup script writes happily into it, filling your SD card while appearing to
-succeed (step 20).
+succeed (step 20). Use `-M` (exact mountpoint), **not** `--target`: `--target`
+walks *up* to whichever filesystem contains the path, so on an unmounted
+`/mnt/storage` it cheerfully prints the root filesystem and exits 0 — the false
+pass you were trying to catch.
 
 **Health**
 
