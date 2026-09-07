@@ -406,6 +406,64 @@ sudo journalctl -k | grep 'UFW BLOCK' | tail
 
 The `SRC=` field in a blocked line tells you exactly which address to allow.
 
+**The third gotcha — your LAN-scoped rules are probably IPv4-only.** Most home
+ISPs now hand out a *routable* IPv6 prefix, and there is **no NAT in IPv6** — so
+where an IPv4 service is incidentally shielded by your router doing address
+translation, the same service on IPv6 has your firewall and nothing else in
+front of it. Check whether that applies to you:
+
+```bash
+ip -6 addr show scope global    # a 2xxx:/3xxx: address here means globally routable
+ping6 -c2 2606:4700:4700::1111  # and working v6 internet
+```
+
+If you have one, note how `ufw` treats these two rules differently:
+
+```bash
+sudo ufw allow 22/tcp                              # both IPv4 and IPv6
+sudo ufw allow from 192.168.1.0/24 to any port 445 # IPv4 ONLY — the CIDR is v4
+```
+
+Any rule scoped to an **IPv4** address or subnet can only ever match IPv4
+traffic. There is no v6 counterpart unless you write one with an IPv6 range.
+The trap is that `sudo ufw status` renders both kinds identically, with no
+column telling you which protocol a rule covers, so a screenful of confident
+`ALLOW IN 192.168.1.0/24` lines can be leaving IPv6 completely unaddressed.
+Read the generated rule files instead, which cannot hide it:
+
+```bash
+sudo grep '^-A ufw-user-input'  /etc/ufw/user.rules    # your IPv4 rules
+sudo grep '^-A ufw6-user-input' /etc/ufw/user6.rules   # your IPv6 rules
+```
+
+On a machine where every rule was written with a LAN CIDR, the second command
+returns **nothing at all**.
+
+Two possible readings of that, and they point opposite ways:
+
+- **If your default policy is `deny (incoming)`, you are fine** — unmatched
+  IPv6 hits the default DROP, so the services are closed rather than open. This
+  is the common case and the reason it so rarely bites.
+- **But nothing you allowed on the LAN works over IPv6 either**, which is the
+  more likely thing to actually confuse you: a share or dashboard that works
+  from one device and not another, where the difference turns out to be that
+  the working client resolved an IPv4 address and the failing one preferred
+  IPv6.
+
+Also confirm what your services are even bound to — `[::]` means "all IPv6
+addresses", the routable one included:
+
+```bash
+sudo ss -tulpn | grep '\[::\]'
+```
+
+If you want a rule to cover both protocols, either drop the address scope
+(`sudo ufw allow 445/tcp` — but then it is open to the whole internet, so only
+for something genuinely public), or add an explicit second rule for your IPv6
+prefix. If you would rather not reason about two protocols at all, the honest
+alternative is to disable IPv6 deliberately rather than by accident — but
+decide it, don't drift into it.
+
 ## 8. Block brute-force attacks (fail2ban)
 
 Even with key-only SSH, bots will hammer your Pi with login attempts. `fail2ban`
@@ -1718,7 +1776,13 @@ sudo ss -tulpn                    # every listening port, and what owns it
 ```
 
 Look for anything listening on `0.0.0.0` that you did not intend to publish —
-that's the single most useful line in this checklist.
+that's the single most useful line in this checklist. Check `[::]` (all IPv6
+addresses) with the same suspicion, and confirm your firewall actually has IPv6
+rules rather than only IPv4 ones (step 7):
+
+```bash
+sudo grep -c '^-A ufw6-user-input' /etc/ufw/user6.rules   # 0 = no IPv6 rules at all
+```
 
 **Security**
 
