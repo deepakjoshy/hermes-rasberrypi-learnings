@@ -1905,6 +1905,71 @@ sequence for a fiddly migration. Each is cheap and pays off every later time
 that task recurs. Crucially, when the agent gets something wrong and you correct
 it, **fold the correction back into the skill** so it isn't relearned next time.
 
+### Voice messages: transcription that runs on the Pi
+
+If you drive the agent from a messaging app, **voice notes are the feature that
+makes it genuinely usable from a phone** — dictating "why is Nextcloud throwing
+502s" while walking is far easier than thumb-typing it. That requires
+speech-to-text, and this is one place where the local option is genuinely
+competitive.
+
+Most agents default to a local [Whisper](https://github.com/openai/whisper)
+implementation — commonly [faster-whisper](https://github.com/SYSTRAN/faster-whisper),
+a reimplementation that is several times quicker on CPU than the original:
+
+```bash
+pip install faster-whisper
+```
+
+Models download automatically on first use. **The default is usually the `base`
+model, and upgrading it is the single highest-value tweak here** — technical
+vocabulary is exactly where the small models fail, and a homelab voice note is
+nothing *but* technical vocabulary.
+
+Measured on a Pi 5 (8GB, CPU-only, `int8`), transcribing a 13.8-second dictated
+sentence containing "IPv4", "Docker bridge subnet", and "UFW":
+
+| Model | Disk | Cold load | Decode 13.8s | Result |
+|---|---|---|---|---|
+| `tiny` | ~75 MB | 5.7s | 3.4s | heard "UFW **blocklines**" |
+| `base` | ~142 MB | 2.3s | 6.3s | heard "UFW **blocklines**" |
+| `small` | ~464 MB | 6.7s | 19.3s | heard "UFW **block lines**" ✅ |
+
+All three got the general sense right. Only `small` correctly split the term it
+had never seen — and on a homelab that difference is the whole point, because
+the words you dictate are `ufw`, `fstab`, `journalctl`, and container names.
+
+Note the honest tradeoff: `small` decodes **slower than real time** on a Pi
+(19.3s of compute for 13.8s of audio). For a voice note that is completely fine
+— you send it and the reply arrives moments later — but it is not suitable for
+live streaming transcription, and it costs ~500MB of RAM while running. On a
+4GB Pi already running several containers, stay on `base`.
+
+Point the config at the bigger model (exact key varies by agent):
+
+```yaml
+stt:
+  enabled: true
+  language: en          # pinning the language is faster and more accurate
+  local:
+    model: small        # upgraded from the default "base"
+```
+
+Two settings worth getting right:
+
+- **Pin the language** rather than leaving auto-detect on. Detection costs time
+  and occasionally guesses wrong on a short clip, producing confident nonsense.
+- **Prefer local over a cloud STT provider** unless you have a reason not to.
+  Voice notes are the most personal thing you'll send the agent, and local
+  transcription means the audio never leaves the Pi — no API key, no per-minute
+  cost, and it keeps working when your internet doesn't. Cloud options (Groq,
+  OpenAI, ElevenLabs) are faster and better at accents; that is the real reason
+  to choose one, not convenience.
+
+If accuracy still disappoints, the fix is usually **not** a bigger model:
+record somewhere quieter, closer to the mic. Whisper degrades much harder on
+background noise than on vocabulary.
+
 ### Cost, privacy, and a local fallback
 
 A cloud-model agent running scheduled jobs draws quota on a schedule whether or
