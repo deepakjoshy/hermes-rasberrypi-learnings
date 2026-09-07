@@ -893,10 +893,13 @@ from starting cleanly; `testparm` parses the file and reports errors without
 touching the running service:
 
 ```bash
-testparm
+testparm -s
 ```
 
-If it prints your share stanza back without complaint, the syntax is good. Then
+If it prints your share stanza back without complaint, the syntax is good.
+(`-s` skips the "Press enter to see a dump of your service definitions" prompt
+that plain `testparm` stops at — which is also what lets you use it inside a
+script.) Then
 set a Samba password for your user (separate from their Linux login password)
 and restart the service:
 
@@ -1067,10 +1070,19 @@ a local automation script without sending data anywhere.
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-sudo systemctl enable --now ollama
 ```
 
-This installs `ollama` as a systemd service (`ollama.service`) listening on
+The installer creates and starts a systemd service (`ollama.service`) for you —
+you do not need to enable it separately, but do confirm it came up and is bound
+where you expect:
+
+```bash
+systemctl is-enabled ollama       # enabled
+ss -tulpn | grep 11434            # expect 127.0.0.1:11434, not 0.0.0.0:11434
+```
+
+(As with any `curl | sh` installer, read the script first if you'd rather not
+run an unreviewed remote script as root.) The service listens on
 `localhost:11434` by default — **not** exposed to your LAN or the internet
 unless you deliberately change its bind address, which is the right default
 for something with no built-in authentication of its own.
@@ -1092,10 +1104,9 @@ GPU machine:
   than a cloud model; this is for lightweight local tasks, not a chat
   replacement for a hosted frontier model.
 - **Keep it loopback-only unless you have a specific reason not to.** Ollama's
-  API has no authentication by default — if you bind it to `0.0.0.0` to reach
-  it from another device, put it behind the same LAN/VPN-only discipline as
-  any other admin-ish service in this guide (see [Reaching your Pi from
-  outside home](#11-reaching-your-pi-from-outside-home)), never a public tunnel.
+  API has no authentication at all, so a `0.0.0.0` bind hands anyone who can
+  reach the port full use of it — LAN or [VPN](#11-reaching-your-pi-from-outside-home)
+  only, never a public tunnel.
 - **It's just another API endpoint to your automation.** Anything that already
   talks to a cloud LLM API can usually point at `http://localhost:11434` instead
   for tasks that don't need a bigger model — handy for a scheduled job (see
@@ -1163,18 +1174,26 @@ A home server is only as safe as its backups. Build these habits early:
   tool while it's running, which produces a consistent copy:
   ```bash
   # MariaDB/MySQL (e.g. the Nextcloud DB container above)
-  docker exec -e MYSQL_PWD="$DB_ROOT_PASSWORD" nextcloud-db \
+  set -a; . /path/to/backup.env; set +a   # exports DB_ROOT_PASSWORD, chmod 600
+  MYSQL_PWD="$DB_ROOT_PASSWORD" docker exec -e MYSQL_PWD nextcloud-db \
     mysqldump -u root nextcloud > nextcloud-db.sql
   ```
   For PostgreSQL the equivalent is `pg_dump`. Back up the dump file, not the raw
   data folder.
 
-  Note the password handling: writing `-p<password>` directly on the command
-  line puts the secret into your shell history **and** makes it visible to any
-  user running `ps` while the dump runs. Passing it via the `MYSQL_PWD`
-  environment variable (read here from a variable your script sources from a
-  permissions-locked env file) avoids both. Also **check the dump is non-empty
-  before you trust it** — a failed dump still creates a 0-byte file and a
+  Note the password handling, which is fiddlier than it looks. Writing
+  `-p<password>` on the `mysqldump` command line puts the secret into your shell
+  history **and** into the process list, where any user running `ps` can read it
+  while the dump runs. Using the `MYSQL_PWD` environment variable avoids the
+  history problem — but only if you pass it *by name*. Writing
+  `docker exec -e MYSQL_PWD="$DB_ROOT_PASSWORD" ...` expands the value into the
+  `docker exec` arguments, so it shows up in `ps` output in full, exactly like
+  `-p` would. The bare `-e MYSQL_PWD` form above tells Docker to copy the
+  variable in from the surrounding environment instead, so the value never
+  appears in any command line. Keep the value itself in a `chmod 600` env file
+  outside version control (see
+  [step 19](#19-versioning-your-configuration-with-git)). Also **check the dump
+  is non-empty before you trust it** — a failed dump still creates a 0-byte file and a
   backup script that doesn't check will happily archive nothing:
   ```bash
   [ -s nextcloud-db.sql ] || { echo "DB dump is empty - aborting"; exit 1; }
