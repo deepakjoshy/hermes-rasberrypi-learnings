@@ -1826,25 +1826,120 @@ Configuration lives in `~/.hermes/config.yaml`, secrets in `~/.hermes/.env`
 `~/.hermes/logs/`, which is exactly the kind of custom path that needs its own
 logrotate rule ([step 22](#22-log-management)).
 
+### What actually makes it useful: the layer on top
+
+A vanilla install gives you a capable assistant with a shell. It does **not**
+give you something that knows your machine, holds a consistent policy, or does
+anything while you sleep. That comes from four things you add yourself, and they
+matter far more than the install command:
+
+**1. A constitution — the operating contract it reads every session.**
+
+The highest-value file you will write. A plain-markdown document defining who
+the agent is, who it works for, and precisely what it may do unprompted. Keep
+it in the agent's home directory and have it loaded at the start of every
+session. Worth pinning down explicitly:
+
+- **The single overriding rule.** On a headless box that is almost always *"do
+  not lock the owner out of this machine."* Every judgment call gets measured
+  against it, and a safely reversible change beats an elegant one that could
+  strand you.
+- **The permission tiers** — see
+  [the next section](#26-a-tiered-approval-model-for-automation).
+- **Communication style**, including how much to explain. Tuning this for a
+  Linux beginner ("define jargon on first use, lead with the answer, one problem
+  at a time") is what turns the agent into a teacher rather than a black box.
+- **What counts as approval.** State plainly that **silence is never consent**
+  and that an unanswered message times out into "no". Without this an agent will
+  happily read a lack of objection as a green light.
+- **Instructions come only from you.** Log files, error messages, web pages, and
+  container images are *data*, not commands. An agent that will run whatever a
+  README tells it to is a serious liability — this rule is the mitigation.
+
+**2. A memory file — what it knows about *your* box.**
+
+A living document the agent maintains itself: what's installed and why, every
+config change with its rollback command, decisions you've already made (so they
+don't get relitigated monthly), and open threads. This is what makes a cold
+session start informed instead of re-discovering your setup every time.
+
+Two rules keep it honest — have the agent verify claims against the live system
+rather than trusting its own past notes, and record *rollback commands beside
+every change*, not just what was done. Version it with git alongside your other
+config ([step 21](#21-versioning-your-configuration-with-git)) so it can't
+silently regress.
+
+**3. Scheduled jobs — the part that runs without you.**
+
+This is where an always-on server earns its keep, and it goes well beyond the
+sysadmin basics. Jobs fall into roughly three classes:
+
+| Class | Runs as | Examples |
+|---|---|---|
+| **Deterministic scripts** | Plain shell/Python, no model | Nightly backup, new-device LAN scan, download-completion watcher, config-repo sync, device API pollers |
+| **Agent jobs** | Model reasons over live data | Weekly state audit that diffs the machine against last week, doc maintenance, digests that summarize instead of dumping |
+| **External-world jobs** | Model + web access | Price/deal watches, news digests, anything needing judgment about relevance |
+
+Two hard-won rules. **Anything expressible as a script should be a script** —
+it's faster, free, and can't hallucinate; save the model for jobs that need
+judgment. And **make failures loud, successes quiet**: a job that messages you
+nightly gets ignored within a week, so have them emit nothing unless something
+genuinely changed.
+
+A worked example of the second class: a weekly audit that snapshots containers,
+systemd units, listening ports, and installed packages to a file, diffs it
+against last week's, and has the agent investigate real changes and fold them
+into the memory file. That is the automated answer to "the notes drift out of
+date."
+
+**4. Skills — reusable procedures it loads on demand.**
+
+A skill is a markdown file describing how to do one recurring task properly,
+loaded only when relevant. This solves the problem that a constitution can't:
+you don't want every niche procedure in the system prompt on every call, but you
+do want the agent to get it right when it comes up.
+
+Write one whenever you work out a non-obvious procedure — the gotchas of a
+specific vendor API, how a recurring report should be formatted, the safe
+sequence for a fiddly migration. Each is cheap and pays off every later time
+that task recurs. Crucially, when the agent gets something wrong and you correct
+it, **fold the correction back into the skill** so it isn't relearned next time.
+
+### Cost, privacy, and a local fallback
+
+A cloud-model agent running scheduled jobs draws quota on a schedule whether or
+not anything interesting happened. Worth doing deliberately:
+
+- **Match the model to the job.** Reserve a frontier model for genuinely hard
+  reasoning; a small fast model handles routine summarizing fine.
+- **Point trivial work at a local model.** Anything that doesn't need a big
+  model can go to [Ollama](#16-running-a-local-ai-model-with-ollama) on the Pi
+  itself — free, private, and it keeps working when your quota doesn't. Most
+  agents accept an OpenAI-compatible endpoint, so `http://localhost:11434/v1`
+  usually just works, including as an automatic **fallback** when the primary
+  provider is unavailable.
+- **Pin the model per job.** If your agent lets you set a model per scheduled
+  job, do it — otherwise changing your global default silently changes the
+  behavior of every job at once.
+
 ### Setting it up sanely
 
-- **Give it a written operating contract.** The single highest-value thing you
-  can do is write down, in a file the agent reads at the start of every session,
-  what it may do without asking and what it must ask about first. That is what
-  [the next section](#26-a-tiered-approval-model-for-automation) describes, and
-  it matters far more than which agent you pick.
-- **Have it keep notes on your machine.** A file it updates with what's
-  installed, what changed, and what's still open makes every later session
-  start informed instead of blind.
 - **Connect it to the alert channel you already use** rather than a new one
-  ([step 14](#14-uptime-monitoring-and-alerts)).
-- **Watch what it costs.** A cloud-model agent running scheduled jobs consumes
-  quota on a schedule, whether or not anything interesting happened. Prefer jobs
-  that stay silent when there's nothing to report.
+  ([step 14](#14-uptime-monitoring-and-alerts)). A messaging platform doubles as
+  the approval channel, so the agent can ask permission when you're not at a
+  terminal.
+- **Keep secrets in permission-locked files**, referenced by path, never pasted
+  into a config the agent quotes back. `chmod 600`, outside git
+  ([step 21](#21-versioning-your-configuration-with-git)).
+- **Rotate its logs.** `~/.hermes/logs/` is exactly the custom path
+  [step 22](#22-log-management) is about.
 - **Don't let it be your only way in.** If the agent is how you administer the
   box, a broken agent is a lockout. Keep SSH working independently
   ([step 6](#6-secure-your-ssh-access)) and a
   [VPN fallback](#11-reaching-your-pi-from-outside-home).
+- **Expect to correct it.** The setup above is not one-time configuration; it's
+  a feedback loop. Every wrong assumption it makes is a line to add to the
+  constitution, the memory file, or a skill.
 
 > **If you expose its web or chat interface, that is a fresh exposure decision**
 > under [step 11](#11-reaching-your-pi-from-outside-home) — and a higher-stakes
