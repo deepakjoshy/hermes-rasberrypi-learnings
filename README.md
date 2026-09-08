@@ -1158,6 +1158,55 @@ The key inversion: a normal monitor alerts on a *bad response*; a heartbeat
 alerts on **silence**. Silence is exactly what a dead Pi produces, so a
 heartbeat is the only check that survives the failure it exists to report.
 
+### A check that cannot fail is not a check
+
+Monitoring, backup verification, and health scripts share a failure mode that is
+worse than having no check at all: a check that reports **pass** unconditionally,
+because it is structurally incapable of reporting anything else. It runs on
+schedule, it never complains, and it earns trust it hasn't got. Three ways this
+happens in practice:
+
+- **The check measures the wrong thing.** A "failures since yesterday" counter
+  that tests a *log file's* modification time instead of the dates on the lines
+  inside it will match the whole file forever once anything is ever written to
+  it — so it reports either "everything failed" or "nothing failed" permanently,
+  regardless of the contents. Any check whose input is a proxy for the real
+  signal deserves a second look at what it is actually reading.
+- **The failure branch is unreachable.** Counting matches with `grep -c` looks
+  harmless, but `grep` exits **1** when it finds nothing — so under `set -e` the
+  script dies before it can report zero, and in `n=$(grep -c ... || true)` style
+  code the "no problems" and "grep broke" cases become indistinguishable. Test
+  the empty case explicitly:
+
+  ```bash
+  n=$(grep -c 'ERROR' /var/log/myapp.log || true)   # 0 and exit 1 on no match
+  [ -n "$n" ] || { echo "check itself failed"; exit 1; }
+  ```
+
+- **The success signal was never produced.** If a job's "did it work" evidence is
+  an artefact it creates itself — a `latest` pointer, a marker file, a status
+  line — then a run where creating that artefact *silently failed* looks
+  identical to a run that succeeded before the artefact existed. Have the job
+  check its own output exists and is non-empty before declaring success.
+
+There is also the check that stops running entirely. A cron job that is never
+triggered emits no errors, so nothing looks wrong; the only way to notice is a
+**staleness assertion** — fail if the newest artefact is older than the interval
+you expect:
+
+```bash
+# alert if the most recent backup snapshot is more than 36 hours old
+find /mnt/backup -maxdepth 1 -name 'snapshot-*' -mmin -2160 | grep -q . \
+  || echo "WARNING: no backup snapshot in the last 36h"
+```
+
+The single habit that catches all of these: **break the thing on purpose and
+confirm the alarm fires.** Stop a monitored container, feed the parser a log line
+you know is an error, rename the backup directory. A check you have never seen
+fail is an assumption, not a check — the same reasoning as the untested-restore
+and untested-alert-path items in
+[the verification checklist](#27-a-checklist-to-verify-your-setup).
+
 ## 15. Download clients and media libraries
 
 A download client (e.g. [qBittorrent](https://www.qbittorrent.org/)) and a
@@ -1913,7 +1962,9 @@ surprises:
 - **Make failures loud, successes quiet.** A nightly job that silently fails
   for a month is worse than one that pages you once. Route errors to your
   alert channel; let clean runs produce no notification (or a single quiet
-  weekly summary) rather than a message every single night.
+  weekly summary) rather than a message every single night. This assumes the
+  job can actually detect its own failure — see [A check that cannot fail is
+  not a check](#a-check-that-cannot-fail-is-not-a-check).
 - **Add pre-flight checks** before anything destructive or resource-heavy —
   e.g. a backup script should confirm its target drive is actually mounted and
   has free space *before* it starts, not discover that half-way through.
