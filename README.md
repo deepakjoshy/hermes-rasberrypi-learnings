@@ -875,6 +875,7 @@ Common starting points, by need:
 | Uptime/monitoring | Uptime Kuma, Grafana + Prometheus |
 | Reverse proxy | Caddy, Nginx Proxy Manager, Traefik (see [step 19](#19-putting-several-services-behind-one-reverse-proxy)) |
 | Container management UI | Portainer |
+| Workflow automation | n8n (see worked example below) |
 
 [Portainer](https://docs.portainer.io/) gives you a web UI over Docker if you'd
 rather not manage containers from the command line. For each new service,
@@ -1038,6 +1039,80 @@ than loosening the whole directory:
 sudo setfacl -R -m u:33:rwX /path/to/your/folder
 sudo setfacl -R -d -m u:33:rwX /path/to/your/folder   # so new files inherit it too
 ```
+
+### A worked example — workflow automation with n8n
+
+[n8n](https://n8n.io/) is a self-hosted workflow automation tool — think
+"connect service A to service B on a trigger" without writing a full app. It's
+a reasonable next step once Docker feels comfortable, but it deserves a
+different mental model than Uptime Kuma or Nextcloud: **a workflow you build
+in it can call out to anything and store credentials for anything it talks
+to.** Treat its exposure decision and its login as seriously as you'd treat
+SSH, not as casually as a dashboard.
+
+**1. Write the Compose file.**
+
+```bash
+mkdir -p ~/apps/n8n && cd ~/apps/n8n
+nano docker-compose.yml
+```
+
+```yaml
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "<pi-ip>:5678:5678"
+    environment:
+      - N8N_HOST=<pi-ip>
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_WEBHOOK_URL=http://<pi-ip>:5678/
+      - GENERIC_TIMEZONE=Asia/Kolkata
+      - TZ=Asia/Kolkata
+    volumes:
+      - ./data:/home/node/.n8n
+```
+
+- Binding `ports:` to `<pi-ip>` instead of a bare `"5678:5678"` keeps this off
+  every interface by default, same reasoning as the Uptime Kuma example above.
+- `N8N_HOST`/`N8N_WEBHOOK_URL` tell n8n what address to put in the webhook
+  URLs it generates — set these to whatever hostname you'll actually reach it
+  by, or webhooks it hands you will point at the wrong place.
+- The data volume holds n8n's SQLite database: all your workflows, execution
+  history, and encrypted credentials. Back it up like you would any other
+  stateful app (see [step 20](#20-backups-and-maintenance)).
+
+Start it, then open `http://<pi-ip>:5678` and create the owner account on
+first load — don't skip this or leave the instance in its unauthenticated
+setup state if it's reachable from anywhere but your own machine.
+
+**2. Reaching other host services from inside the container.** A common first
+workflow calls something running directly on the Pi — a local LLM via Ollama,
+for example. The usual Docker advice of using `host.docker.internal` **does
+not resolve by default on Linux** (it's a Docker Desktop convenience for
+Mac/Windows). Two ways to fix it:
+
+- Add `extra_hosts: ["host.docker.internal:host-gateway"]` under the service
+  in the compose file, then use `host.docker.internal` in n8n's credentials —
+  the portable fix, survives the container's IP changing.
+- Or find the bridge network's gateway IP directly (`docker network inspect
+  <network-name> | grep Gateway`, commonly `172.x.x.1`) and use that.
+
+Either way, if the host service is firewalled with ufw, container traffic
+arrives from the Docker bridge subnet, **not** your LAN CIDR — it needs its
+own `ufw allow` rule for that subnet, or the container's requests will hang
+looking like a firewall problem rather than a config one.
+
+**3. If you expose it beyond your LAN, raise the bar.** n8n's own login is
+the only thing standing between the internet and a tool that can execute
+arbitrary workflow code and holds every credential you've given it. If you
+put it behind a [tunnel](#11-reaching-your-pi-from-outside-home), strongly
+consider an additional gate in front of it (e.g. Cloudflare Access) rather
+than relying on the app password alone — and if you decide against that
+extra gate, that's a real risk being accepted, not a formality to skip past.
 
 ## 13. File sharing on your LAN with Samba
 
