@@ -245,8 +245,16 @@ DHCP lease — it keeps its current address until then. Reboot the Pi (or wait o
 the lease) to pick up the reserved IP, then confirm it took:
 
 ```bash
-hostname -I    # should show the address you reserved
+ip -brief -4 addr show eth0    # or wlan0 on Wi-Fi
 ```
+
+Use the interface form rather than `hostname -I`. `hostname -I` prints **every**
+address the machine holds, on every interface, space-separated — once you add
+Docker (step 12) or a VPN (step 11) that is a line of six or eight addresses
+including `172.17.0.1` and a `100.x` tailnet address, and picking your LAN one
+out of it is guesswork. Naming the interface asks the question you actually
+meant. It exits non-zero and says `Device "eth0" does not exist` if you name the
+wrong one, which is also more useful than silence.
 
 ## 6. Secure your SSH access
 
@@ -309,7 +317,27 @@ sudo sshd -t
 ```
 
 No output (exit code 0) means the config is valid; any problem is printed with
-the offending line number. Only once it is clean, reload SSH:
+the offending line number.
+
+**Check that nothing is overriding you.** Near the top of the Debian/Raspberry
+Pi OS `sshd_config` is a line `Include /etc/ssh/sshd_config.d/*.conf`, and sshd
+uses the **first** value it obtains for any keyword — so a drop-in file included
+there wins over the same setting written further down in the main file. Imager's
+advanced options, cloud-init, and some hardening scripts all drop files in that
+directory. Rather than reading both files and reasoning about order, ask sshd
+what it concluded:
+
+```bash
+ls /etc/ssh/sshd_config.d/
+sudo sshd -T | grep -Ei 'passwordauthentication|pubkeyauthentication|permitrootlogin'
+```
+
+`sshd -T` prints the *effective* configuration after all includes are resolved.
+If it disagrees with what you just typed, the answer is in that directory. (See
+[step 27](#27-a-checklist-to-verify-your-setup) for two ways this command can
+still mislead you.)
+
+Only once it is clean, reload SSH:
 
 ```bash
 sudo systemctl restart ssh
@@ -2522,7 +2550,7 @@ Each check is a command whose output you can judge on the spot.
 **Access and identity**
 
 ```bash
-hostname -I                       # matches the IP you reserved (step 5)?
+ip -brief -4 addr show eth0       # matches the IP you reserved (step 5)?
 sudo ss -tulpn                    # every listening port, and what owns it
 ```
 
