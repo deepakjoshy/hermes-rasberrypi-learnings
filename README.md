@@ -265,7 +265,9 @@ the Pi holds the matching public key, and only that pair can log in.
 > **Safety first:** SSH changes are the classic way to accidentally lock
 > yourself out. Do the steps in order, and **keep your current SSH session open**
 > while you test a new connection in a *second* terminal. Only close the first
-> one after the new method is confirmed working.
+> one after the new method is confirmed working. If the Pi is somewhere
+> inconvenient to reach physically, add a
+> [rollback timer](#the-rollback-timer-concretely) as well.
 
 **Step 1 — Create a key pair on your second computer** (not on the Pi):
 
@@ -1445,8 +1447,16 @@ where you expect:
 
 ```bash
 systemctl is-enabled ollama       # enabled
-ss -tulpn | grep 11434            # expect 127.0.0.1:11434, not 0.0.0.0:11434
+ss -tulpn | grep 11434            # expect 127.0.0.1:11434 and nothing else
 ```
+
+Read that second line carefully rather than skimming it for the string
+`0.0.0.0`. `ss` renders a wildcard bind as **`*:11434`**, not as
+`0.0.0.0:11434` — so a service listening on every interface looks nothing like
+the address you were told to watch out for, and a quick glance can read as a
+pass. (Verified on Debian 12 with a deliberately wildcard-bound Ollama: the
+output line is `tcp LISTEN 0 4096 *:11434 *:*`.) Anything other than a literal
+`127.0.0.1` here means the API is reachable beyond the Pi itself.
 
 (As with any `curl | sh` installer, read the script first if you'd rather not
 run an unreviewed remote script as root.) The service listens on
@@ -2533,9 +2543,67 @@ case-by-case under pressure. A scheme that works well in practice:
 4. **High-consequence / hard-to-reverse** — treat as requiring physical presence
    at the machine, not just a remote "yes" (SSH config, disk partitioning,
    bootloader, flushing the firewall). For changes here that could sever remote
-   access, use an **automatic rollback timer**: apply the change, schedule a
-   revert a few minutes out, and only cancel the revert once you've confirmed
-   access still works.
+   access, use an **automatic rollback timer** — see below.
+
+### The rollback timer, concretely
+
+The idea is simple: before applying a change that could cut your own connection,
+schedule the undo *first*, then apply the change. If you can still get in, you
+cancel the undo. If you can't, the machine fixes itself while you go and make
+tea, instead of you driving home to fetch the SD card.
+
+Many write-ups reach for `at` for this, but `at` is not installed by default on
+Raspberry Pi OS or a minimal Debian, so a copy-pasted `echo ... | at now + 5
+minutes` fails with `command not found` at exactly the wrong moment. `systemd-run`
+is already present on any systemd machine and needs no package:
+
+```bash
+# 1. Schedule the undo BEFORE touching anything.
+sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.rollback
+sudo systemd-run --on-active=5min --timer-property=AccuracySec=1s \
+  --unit=ssh-rollback \
+  /bin/bash -c '/bin/cp /etc/ssh/sshd_config.rollback /etc/ssh/sshd_config && /bin/systemctl restart ssh'
+
+# 2. Now make the change and apply it.
+sudo nano /etc/ssh/sshd_config
+sudo sshd -t && sudo systemctl restart ssh
+
+# 3. From a SECOND terminal, prove you can still log in.
+#    Only then, cancel the pending revert:
+sudo systemctl stop ssh-rollback.timer
+```
+
+A few details that matter:
+
+- `--unit=` gives the job a predictable name. Without it `systemd-run` invents a
+  random one (`run-r4f8....timer`), and you have to go hunting for it under
+  pressure — which defeats the point.
+- Check it is really pending with `systemctl list-timers ssh-rollback --no-pager`;
+  it should show a `NEXT` a few minutes out. After you stop it, the same command
+  should list **zero** timers, and the revert never runs. (Verified on Debian 12:
+  scheduling, firing, and cancelling all behave exactly as described here.)
+- **`--timer-property=AccuracySec=1s` is doing real work.** By default systemd
+  gives a timer a one-minute accuracy window and may fire it anywhere inside
+  that window, so a nominal `--on-active=5min` can actually run at nearly six
+  minutes. (Measured on a Pi: a default-accuracy `--on-active=5sec` job fired 23
+  seconds late.) For a rollback you want the deadline you asked for — and if you
+  *test* the pattern with a short delay first, without this property you will
+  conclude it is broken when it has merely not fired yet.
+- **The revert command must be able to run without you.** It executes as root
+  with no shell profile and no terminal, so use absolute paths and don't make it
+  depend on anything interactive.
+- **Name the restore file exactly**, not with a wildcard. The timestamped
+  `.bak.$(date ...)` convention used elsewhere in this guide is right for an
+  archive, but a `cp /etc/ssh/sshd_config.bak.* ...` in the revert command breaks
+  the moment a second backup exists — `cp` then sees several sources and one
+  non-directory target, and fails. A single fixed `.rollback` copy has exactly
+  one meaning.
+- The same pattern covers a firewall change (`ufw reset` or restoring
+  `/etc/ufw/user.rules`) or a network reconfiguration. Adjust the delay to how
+  long you realistically need to test — five minutes is enough to open one new
+  SSH session, not enough to get distracted.
+- This is a safety net, not a substitute for the older rule in this guide: keep
+  your existing session open, and test from a *new* one.
 
 ## 27. A checklist to verify your setup
 
@@ -2554,10 +2622,13 @@ ip -brief -4 addr show eth0       # matches the IP you reserved (step 5)?
 sudo ss -tulpn                    # every listening port, and what owns it
 ```
 
-Look for anything listening on `0.0.0.0` that you did not intend to publish —
-that's the single most useful line in this checklist. Check `[::]` (all IPv6
-addresses) with the same suspicion, and confirm your firewall actually has IPv6
-rules rather than only IPv4 ones (step 7):
+Look for anything listening on a wildcard address that you did not intend to
+publish — that's the single most useful line in this checklist. Note that `ss`
+writes a wildcard bind several ways depending on the socket: `0.0.0.0`, a bare
+`*`, and `[::]` (all IPv6 addresses, which on Linux usually accepts IPv4 too)
+all mean "every interface". Treat all three with the same suspicion; grepping
+only for `0.0.0.0` misses the others. Then confirm your firewall actually has
+IPv6 rules rather than only IPv4 ones (step 7):
 
 ```bash
 sudo grep -c '^-A ufw6-user-input' /etc/ufw/user6.rules   # IPv6 allow rules
