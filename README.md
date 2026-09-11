@@ -496,11 +496,20 @@ Two possible readings of that, and they point opposite ways:
   IPv6.
 
 Also confirm what your services are even bound to — `[::]` means "all IPv6
-addresses", the routable one included:
+addresses", the routable one included. Match on the **local address column
+only**, not on the whole line:
 
 ```bash
-sudo ss -tulpn | grep '\[::\]'
+sudo ss -tulpnH | awk '$5 ~ /^\[::\]:/ {print $1, $5, $7}'
 ```
+
+The obvious `sudo ss -tulpn | grep '\[::\]'` looks equivalent and is not: a
+listening socket prints `[::]:*` in its *peer* address column, so the grep also
+matches sockets bound to `[::1]` (loopback) or a link-local address and hands
+you a list roughly twice as long as the real one. (Verified on a Pi running
+Docker and Samba: 16 matching lines, of which only 7 were genuine wildcard
+binds.) `-H` drops the header so the column numbers are stable; `$5` is the
+local address, `$7` the owning process.
 
 If you want a rule to cover both protocols, either drop the address scope
 (`sudo ufw allow 445/tcp` — but then it is open to the whole internet, so only
@@ -2626,9 +2635,19 @@ Look for anything listening on a wildcard address that you did not intend to
 publish — that's the single most useful line in this checklist. Note that `ss`
 writes a wildcard bind several ways depending on the socket: `0.0.0.0`, a bare
 `*`, and `[::]` (all IPv6 addresses, which on Linux usually accepts IPv4 too)
-all mean "every interface". Treat all three with the same suspicion; grepping
-only for `0.0.0.0` misses the others. Then confirm your firewall actually has
-IPv6 rules rather than only IPv4 ones (step 7):
+all mean "every interface". Grepping only for `0.0.0.0` misses the other two,
+so ask for all three at once — and only in the *local* address column, since
+the peer column of a listening socket is a wildcard on every socket and will
+match anything:
+
+```bash
+sudo ss -tulpnH | awk '$5 ~ /^(0\.0\.0\.0|\*|\[::\]):/ {print $1, $5, $7}'
+```
+
+Read that list against the services you meant to publish. On a Pi running
+Docker, Samba and a media server it is long and most of it is expected — the
+point is to spot the one entry you cannot account for. Then confirm your
+firewall actually has IPv6 rules rather than only IPv4 ones (step 7):
 
 ```bash
 sudo grep -c '^-A ufw6-user-input' /etc/ufw/user6.rules   # IPv6 allow rules
