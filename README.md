@@ -500,7 +500,7 @@ addresses", the routable one included. Match on the **local address column
 only**, not on the whole line:
 
 ```bash
-sudo ss -tulpnH | awk '$5 ~ /^\[::\]:/ {print $1, $5, $7}'
+sudo ss -tulpnH | awk '$5 ~ /^\[::\]:/ {i=index($0,"users:"); print $1, $5, (i?substr($0,i):"-")}'
 ```
 
 The obvious `sudo ss -tulpn | grep '\[::\]'` looks equivalent and is not: a
@@ -508,8 +508,11 @@ listening socket prints `[::]:*` in its *peer* address column, so the grep also
 matches sockets bound to `[::1]` (loopback) or a link-local address and hands
 you a list roughly twice as long as the real one. (Verified on a Pi running
 Docker and Samba: 16 matching lines, of which only 7 were genuine wildcard
-binds.) `-H` drops the header so the column numbers are stable; `$5` is the
-local address, `$7` the owning process.
+binds.) `-H` drops the header so the column numbers are stable, `$5` is the
+local address, and everything from `users:` onward is the owning process — taken
+whole rather than as `$7`, because a process name with a space in it would
+otherwise be cut off mid-name (see
+[step 27](#27-a-checklist-to-verify-your-setup)).
 
 If you want a rule to cover both protocols, either drop the address scope
 (`sudo ufw allow 445/tcp` — but then it is open to the whole internet, so only
@@ -1644,11 +1647,21 @@ Finally, know where to look after an unexplained crash. The kernel logs every
 OOM kill:
 
 ```bash
-journalctl -k --no-pager | grep -i "out of memory"
+journalctl _TRANSPORT=kernel --no-pager | grep -i "out of memory"
 ```
 
-An empty result means memory exhaustion is not your culprit — check heat and
-power instead (see [Troubleshooting](#29-troubleshooting)).
+**Don't reach for `journalctl -k` here**, which is the obvious spelling and the
+wrong one: `-k` implies `-b`, so it shows kernel messages from the *current boot
+only*. An OOM kill bad enough to have rebooted the Pi — exactly the crash you
+are investigating — happened on the previous boot and is therefore invisible,
+and the command returns nothing at all while looking like a clean result.
+`_TRANSPORT=kernel` selects the same kernel messages without the implicit boot
+filter, so it searches the whole retained journal (which needs a persistent
+journal — see [step 22](#22-log-management)). Add `-b -1` if you specifically
+want the boot before this one.
+
+An empty result from *that* command means memory exhaustion is not your culprit
+— check heat and power instead (see [Troubleshooting](#29-troubleshooting)).
 
 ## 19. Putting several services behind one reverse proxy
 
@@ -1846,9 +1859,13 @@ A home server is only as safe as its backups. Build these habits early:
   `--level=err,warn` selects by the kernel's own severity field rather than
   grepping for the word "error" — which misses the I/O and `mmc0:` messages a
   failing card actually emits. Note this is the kernel ring buffer, so it only
-  covers the current boot; for longer history use `journalctl -k -p warning
-  --since "1 week ago"` (needs a persistent journal — see
-  [step 22](#22-log-management)).
+  covers the current boot. For longer history use
+  `journalctl _TRANSPORT=kernel -p warning --since "1 week ago"` (needs a
+  persistent journal — see [step 22](#22-log-management)). Not `journalctl -k`
+  with a `--since`: `-k` implies `-b`, so it silently clamps the answer to the
+  current boot no matter how far back you ask — the reboot you were trying to
+  explain is on the other side of that boundary. (Verified on a Pi: the two
+  forms returned 2,776 and 31,766 lines for the same one-week window.)
   Don't be surprised if an SD card needs replacing after a year or two of heavy
   24/7 writes — this is why an SSD is worth it for busy setups.
 - **Keep a running TODO list** of unfinished items. A home server is rarely
@@ -2641,8 +2658,16 @@ the peer column of a listening socket is a wildcard on every socket and will
 match anything:
 
 ```bash
-sudo ss -tulpnH | awk '$5 ~ /^(0\.0\.0\.0|\*|\[::\]):/ {print $1, $5, $7}'
+sudo ss -tulpnH | awk '$5 ~ /^(0\.0\.0\.0|\*|\[::\]):/ {i=index($0,"users:"); print $1, $5, (i?substr($0,i):"-")}'
 ```
+
+The `index`/`substr` part looks like fussiness and isn't: several real daemons
+register a process name containing a space (`Plex Media Serv`,
+`Plex Tuner Serv`), so a plain `print $7` chops the name at the first space and
+prints `users:(("Plex` — dropping the PID and the rest of the identity, which is
+the whole reason you ran the command. Taking everything from `users:` onward
+keeps the owner intact whatever it's called. (Verified on a Pi running Docker,
+Samba and Plex: `$7` truncated 6 of 20 lines.)
 
 Read that list against the services you meant to publish. On a Pi running
 Docker, Samba and a media server it is long and most of it is expected — the
